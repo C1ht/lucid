@@ -1,0 +1,265 @@
+import asyncio
+import json
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from . import config_store, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve
+from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut, JobStatus
+from .tagging import retag
+from .tagging import staging as tagging_staging
+
+MAX_LOG_LINES = 2000
+MAX_HISTORY = 300
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class Job:
+    id: str
+    kind: JobKind
+    label: str
+    payload: dict[str, Any]
+    status: JobStatus = "queued"
+    created_at: str = field(default_factory=_now)
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    log: list[str] = field(default_factory=list)
+    error: Optional[str] = None
+    bytes_downloaded: int = 0
+    speed_mbps: float = 0.0
+    percent: Optional[float] = None
+
+    def to_out(self) -> JobOut:
+        return JobOut(
+            id=self.id,
+            kind=self.kind,
+            label=self.label,
+            status=self.status,
+            created_at=self.created_at,
+            started_at=self.started_at,
+            finished_at=self.finished_at,
+            log=self.log,
+            error=self.error,
+            bytes_downloaded=self.bytes_downloaded,
+            speed_mbps=self.speed_mbps,
+            percent=self.percent,
+        )
+
+
+class JobManager:
+    def __init__(self) -> None:
+        self.jobs: dict[str, Job] = {}
+        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.subscribers: set[asyncio.Queue] = set()
+        self._worker_task: Optional[asyncio.Task] = None
+
+    def load_history(self) -> None:
+        if not paths.JOBS_HISTORY_PATH.exists():
+            return
+        try:
+            raw = json.loads(paths.JOBS_HISTORY_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+        for item in raw:
+            job = Job(
+                id=item["id"],
+                kind=item["kind"],
+                label=item["label"],
+                payload={},
+                status=item["status"],
+                created_at=item["created_at"],
+                started_at=item.get("started_at"),
+                finished_at=item.get("finished_at"),
+                log=item.get("log", []),
+                error=item.get("error"),
+                bytes_downloaded=item.get("bytes_downloaded", 0),
+                speed_mbps=item.get("speed_mbps", 0.0),
+                percent=item.get("percent"),
+            )
+            if job.status in ("queued", "running"):
+                job.status = "canceled"
+                job.error = "Interrupted by restart"
+                job.finished_at = job.finished_at or _now()
+            self.jobs[job.id] = job
+
+    def _persist(self) -> None:
+        items = [j.to_out().model_dump() for j in list(self.jobs.values())[-MAX_HISTORY:]]
+        paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        paths.JOBS_HISTORY_PATH.write_text(json.dumps(items, indent=2), encoding="utf-8")
+
+    def start(self) -> None:
+        self.load_history()
+        self._worker_task = asyncio.create_task(self._worker())
+
+    def list_jobs(self) -> list[JobOut]:
+        return [j.to_out() for j in reversed(list(self.jobs.values()))]
+
+    def get_job(self, job_id: str) -> Optional[JobOut]:
+        job = self.jobs.get(job_id)
+        return job.to_out() if job else None
+
+    def enqueue(self, kind: JobKind, label: str, payload: dict[str, Any]) -> JobOut:
+        job = Job(id=uuid.uuid4().hex[:12], kind=kind, label=label, payload=payload)
+        self.jobs[job.id] = job
+        self.queue.put_nowait(job.id)
+        self._persist()
+        self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
+        return job.to_out()
+
+    def _broadcast(self, event: dict) -> None:
+        for sub in list(self.subscribers):
+            sub.put_nowait(event)
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self.subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self.subscribers.discard(q)
+
+    async def _worker(self) -> None:
+        while True:
+            job_id = await self.queue.get()
+            job = self.jobs.get(job_id)
+            if job is None:
+                continue
+            await self._run_job(job)
+
+    async def _run_job(self, job: Job) -> None:
+        job.status = "running"
+        job.started_at = _now()
+        self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
+
+        async def on_line(line: str) -> None:
+            job.log.append(line)
+            if len(job.log) > MAX_LOG_LINES:
+                del job.log[: len(job.log) - MAX_LOG_LINES]
+            self._broadcast({"type": "job_log", "job_id": job.id, "line": line})
+
+        try:
+            returncode = await self._execute(job, on_line)
+            job.status = "success" if returncode == 0 else "failed"
+            if returncode != 0:
+                job.error = f"rip exited with code {returncode}"
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
+            job.status = "failed"
+            job.error = str(exc)
+
+        job.finished_at = _now()
+        self._persist()
+        self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
+
+        if job.status == "success":
+            settings = config_store.load_settings()
+            ok, message = await navidrome.trigger_scan(settings.navidrome)
+            if settings.navidrome.enabled:
+                note = f"Navidrome: {message}" if ok else f"Navidrome scan failed: {message}"
+                job.log.append(note)
+                self._persist()
+                self._broadcast({"type": "job_log", "job_id": job.id, "line": note})
+
+    async def _execute(self, job: Job, on_line) -> int:
+        settings = config_store.load_settings()
+        staging_dir = tagging_staging.create_staging_dir(job.id)
+
+        try:
+            source: Optional[str] = None
+            media_type: Optional[str] = None
+            item_id: Optional[str] = None
+            tagging_pref: Optional[bool] = None
+
+            if job.kind == "id":
+                req: Any = DownloadByIdRequest.model_validate(job.payload)
+                source, media_type, item_id = req.source, req.media_type, req.id
+                tagging_pref = req.navidrome_tagging
+            else:
+                req = DownloadByUrlRequest.model_validate(job.payload)
+                parsed = url_resolve.parse_generic_url(req.url)
+                if parsed:
+                    source, media_type, item_id = parsed
+                tagging_pref = req.navidrome_tagging
+
+            tagging_wanted = tagging_pref if tagging_pref is not None else settings.tagging.enabled
+            do_retag = source == "qobuz" and media_type in ("album", "track") and tagging_wanted
+
+            # Fetch Qobuz metadata once, reused for both the size estimate
+            # (progress bar) and retagging -- never fails the job if it errors.
+            meta: Optional[dict] = None
+            estimated_total: Optional[int] = None
+            if source == "qobuz" and media_type and item_id:
+                try:
+                    meta = await metadata_fetch.fetch_metadata("qobuz", item_id, media_type)
+                    estimated_total = progress.estimate_total_bytes(meta, settings.qobuz.quality)
+                except Exception:  # noqa: BLE001 - progress/tagging are both best-effort
+                    meta = None
+
+            async def on_progress(bytes_so_far: int, speed_mbps: float, percent: Optional[float]) -> None:
+                job.bytes_downloaded = bytes_so_far
+                job.speed_mbps = speed_mbps
+                job.percent = percent
+                self._broadcast(
+                    {
+                        "type": "job_progress",
+                        "job_id": job.id,
+                        "bytes": bytes_so_far,
+                        "speed_mbps": speed_mbps,
+                        "percent": percent,
+                    }
+                )
+
+            tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
+            tracker.start()
+            try:
+                if job.kind == "id":
+                    returncode = await streamrip_cli.download_by_id(req, on_line, folder_override=str(staging_dir))
+                else:
+                    returncode = await streamrip_cli.download_by_url(req, on_line, folder_override=str(staging_dir))
+            finally:
+                await tracker.stop()
+
+            if returncode != 0:
+                return returncode
+
+            if do_retag:
+                if meta is None:
+                    await on_line("[tagging] Couldn't fetch Qobuz metadata, files kept as streamrip wrote them.")
+                else:
+                    try:
+                        tier = settings.tagging.navidrome_version_tier
+                        if media_type == "album":
+                            notes = retag.retag_qobuz_album(staging_dir, meta, tier)
+                        else:
+                            notes = retag.retag_qobuz_track(staging_dir, meta, tier)
+                        for note in notes:
+                            await on_line(f"[tagging] {note}")
+                    except Exception as exc:  # noqa: BLE001 - never let tagging sink the download
+                        await on_line(
+                            f"[tagging] Couldn't apply Navidrome-friendly tags, files kept as "
+                            f"streamrip wrote them: {exc}"
+                        )
+
+            music_dir = config_store.resolve_download_folder(settings)
+            moves = tagging_staging.move_into_library(staging_dir, music_dir, job.id)
+            moved_count = sum(1 for m in moves if m.action == "moved")
+            overwritten = [m for m in moves if m.action == "overwritten"]
+            skipped_lower = [m for m in moves if m.action == "skipped_lower_quality"]
+            for m in overwritten:
+                await on_line(f"[move] Overwrote {m.dest}: {m.detail}")
+            for m in skipped_lower:
+                await on_line(f"[move] Skipped overwrite of {m.dest}: {m.detail}")
+            await on_line(
+                f"[move] SUMMARY: moved {moved_count} new, overwrote {len(overwritten)}, "
+                f"skipped {len(skipped_lower)} (existing file was higher quality)."
+            )
+            return returncode
+        finally:
+            tagging_staging.cleanup_staging_dir(job.id)
+
+
+manager = JobManager()

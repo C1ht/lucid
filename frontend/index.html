@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lucid</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <circle cx="12" cy="12" r="9"/>
+        <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>Lucid</span>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.5-4.5"/></svg>
+        <span>Search</span>
+      </button>
+      <button class="nav-item" data-view="queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        <span>Queue</span>
+        <span class="count-badge" id="queue-count" hidden>0</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="status-dot" id="nav-status-dot"></span>
+      <span class="status-label">Navidrome</span>
+    </div>
+  </aside>
+
+  <main class="content">
+    <section id="view-search" class="view wide active">
+      <h1 class="large-title" id="search-title">Search</h1>
+      <div class="searchbar">
+        <svg class="searchbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.5-4.5"/></svg>
+        <input id="search-query" type="text" placeholder="Search artists, albums, songs, playlists" autocomplete="off" spellcheck="false">
+        <button type="button" class="icon-btn" id="search-clear" title="Clear" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <button type="button" class="btn btn-outline btn-small" id="paste-toggle">Paste link</button>
+      </div>
+
+      <form id="url-form" class="url-form" hidden>
+        <input id="url-input" class="input grow" type="text" placeholder="Qobuz / Tidal / Deezer / SoundCloud / last.fm link">
+        <button type="submit" class="btn btn-accent">Download</button>
+      </form>
+
+      <div class="browse-toolbar" id="browse-toolbar" hidden>
+        <div class="chips" id="filter-chips"></div>
+        <label class="tagging-pick" title="Navidrome-friendly tagging for Qobuz album/track downloads">
+          Tagging
+          <select id="tagging-override" class="select select-small">
+            <option value="">Default</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="browse-body"></div>
+    </section>
+
+    <section id="view-queue" class="view">
+      <header class="view-header"><h1>Queue</h1><p>Downloads run one at a time, in order.</p></header>
+      <div id="job-list" class="job-list"></div>
+      <div id="job-empty" class="empty-state"><p>No downloads yet.</p></div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <header class="view-header"><h1>Settings</h1><p>Credentials are stored on disk in the config volume.</p></header>
+      <form id="settings-form">
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Navidrome-friendly tagging</h2>
+            <label class="switch"><input type="checkbox" id="tagging-enabled"><span class="slider"></span></label>
+          </div>
+          <p class="panel-note">
+            Qobuz album/track downloads get re-tagged after download with proper
+            multi-artist, role, and compilation tags instead of streamrip's own
+            joined-string defaults. See <code>docs/navidrome-tagging.md</code> for the
+            full mapping. Phase 1: Qobuz only — Tidal/Deezer/SoundCloud are unaffected for now.
+          </p>
+          <div class="field-grid">
+            <label>Navidrome version<span class="hint">Gates which tags are safe to write — set this to match your server</span>
+              <select class="select" id="tagging-tier">
+                <option value="pre_0_45">Below 0.45.0 (no multi-valued tags at all)</option>
+                <option value="0_45_to_0_50">0.45.0 – 0.50.x (multi-valued tags, no role tags)</option>
+                <option value="0_51_to_0_54">0.51.1 – 0.54.x (role tags, no PERFORMER sub-roles)</option>
+                <option value="0_55_plus" selected>0.55.0 or later (full support)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Navidrome</h2>
+            <label class="switch"><input type="checkbox" id="nav-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field-grid">
+            <label>Server URL<input class="input" id="nav-url" placeholder="http://navidrome:4533"></label>
+            <label>Username<input class="input" id="nav-username"></label>
+            <label>Password<input class="input" id="nav-password" type="password" placeholder="(unchanged)"></label>
+          </div>
+          <div class="panel-actions">
+            <button type="button" class="btn btn-outline" id="nav-test">Test connection</button>
+            <span id="nav-test-result" class="test-result"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Qobuz</h2>
+            <label class="switch"><input type="checkbox" id="qobuz-enabled"><span class="slider"></span></label>
+          </div>
+          <p class="panel-note">
+            Qobuz's email+password login is currently broken on their end for
+            third-party apps (401 "Invalid credentials" even with a correct
+            password). Use an auth token instead — switch it on below.
+          </p>
+          <div class="field-grid">
+            <label class="checkbox-row"><input type="checkbox" id="qobuz-use-token"> Use auth token instead of email/password (recommended)</label>
+            <label><span id="qobuz-id-label">Email or user ID</span><input class="input" id="qobuz-email"></label>
+            <label><span id="qobuz-pwd-label">Password</span><span class="hint" id="qobuz-pwd-hint">Your account password — hashed automatically, never sent as plaintext</span><input class="input" id="qobuz-password" type="password" placeholder="(unchanged)"></label>
+            <label>Quality<select class="select" id="qobuz-quality">
+              <option value="1">1 — 320kbps MP3</option>
+              <option value="2">2 — 16-bit/44.1kHz FLAC</option>
+              <option value="3" selected>3 — 24-bit/≤96kHz</option>
+              <option value="4">4 — 24-bit/≥96kHz</option>
+            </select></label>
+          </div>
+          <div id="qobuz-token-help" class="panel-note" hidden>
+            <strong>Getting your user ID and auth token:</strong>
+            <ol>
+              <li>Log in at <code>play.qobuz.com</code> in your browser as usual.</li>
+              <li>Open DevTools → Network tab, reload the page.</li>
+              <li>Find the request to <code>user/login</code> and open its response.</li>
+              <li>Copy <code>user.id</code> into "User ID" and <code>user_auth_token</code> into "Auth token" below.</li>
+            </ol>
+            It's a session credential, not a one-time secret — if downloads start failing again later, re-extract it the same way.
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Tidal</h2>
+            <label class="switch"><input type="checkbox" id="tidal-enabled"><span class="slider"></span></label>
+          </div>
+          <p class="panel-note">Tidal login requires a one-time interactive step. Run <code>podman exec -it lucid rip config --tidal</code> after starting the container, then refresh this page.</p>
+          <div class="field-grid">
+            <label>Quality<select class="select" id="tidal-quality">
+              <option value="0">0 — 256kbps AAC</option>
+              <option value="1">1 — 320kbps AAC</option>
+              <option value="2">2 — 16-bit/44.1kHz FLAC</option>
+              <option value="3" selected>3 — 24-bit/44.1kHz MQA</option>
+            </select></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Deezer</h2>
+            <label class="switch"><input type="checkbox" id="deezer-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field-grid">
+            <label>ARL cookie<span class="hint">From your logged-in browser session on deezer.com</span><input class="input" id="deezer-arl" type="password" placeholder="(unchanged)"></label>
+            <label>Quality<select class="select" id="deezer-quality">
+              <option value="0">0 — 128kbps MP3</option>
+              <option value="1">1 — 320kbps MP3</option>
+              <option value="2" selected>2 — FLAC</option>
+            </select></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>SoundCloud</h2>
+            <label class="switch"><input type="checkbox" id="soundcloud-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field-grid">
+            <label>Client ID<input class="input" id="soundcloud-client-id" type="password" placeholder="(unchanged)"></label>
+            <label>App version<input class="input" id="soundcloud-app-version"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>YouTube</h2>
+            <label class="switch"><input type="checkbox" id="youtube-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field-grid">
+            <label class="checkbox-row"><input type="checkbox" id="youtube-videos"> Also download video files</label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Conversion</h2>
+            <label class="switch"><input type="checkbox" id="conv-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="field-grid">
+            <label>Target codec<select class="select" id="conv-codec">
+              <option>ALAC</option><option>FLAC</option><option>OPUS</option><option>MP3</option><option>VORBIS</option><option>AAC</option>
+            </select></label>
+            <label>Max sample rate (Hz)<input class="input" id="conv-sampling-rate" type="number"></label>
+            <label>Max bit depth<input class="input" id="conv-bit-depth" type="number"></label>
+            <label>Lossy bitrate (kbps)<input class="input" id="conv-lossy-bitrate" type="number"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Downloads location &amp; naming</h2></div>
+          <div class="field-grid" id="dl-absolute-row" hidden>
+            <label class="checkbox-row">Download folder
+              <span class="hint">Picked via the native folder dialog — overrides the subfolder setting below</span>
+              <span class="path-picker">
+                <input class="input mono" id="dl-absolute-path" readonly placeholder="(using default)">
+                <button type="button" class="btn btn-outline btn-small" id="dl-browse-btn">Browse…</button>
+                <button type="button" class="btn btn-outline btn-small" id="dl-clear-btn">Clear</button>
+              </span>
+            </label>
+          </div>
+          <div class="field-grid">
+            <label>Subfolder within the music volume<span class="hint">Relative path under /music — leave blank to use the mount root</span><input class="input mono" id="dl-subfolder" placeholder="e.g. streamrip"></label>
+            <label>Folder format<input class="input mono" id="fp-folder-format"></label>
+            <label>Track format<input class="input mono" id="fp-track-format"></label>
+            <label class="checkbox-row"><input type="checkbox" id="fp-restrict-chars"> Restrict to printable ASCII filenames</label>
+          </div>
+          <p class="panel-note">Files land at <code>&lt;download folder&gt;/&lt;subfolder&gt;/&lt;folder format&gt;/&lt;track format&gt;</code>. In the container, that's under wherever you mounted <code>/music</code> on the host (or in Navidrome's own container); on desktop, it's the folder picked above, or <code>Music\Lucid</code> by default. Point Navidrome's library at that same path and it will pick new albums up on its own scan schedule, or immediately after each download if Navidrome is configured above.</p>
+        </div>
+
+        <div class="settings-actions">
+          <button type="submit" class="btn btn-accent">Save settings</button>
+          <span id="settings-save-result" class="test-result"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+</div>
+
+<div id="toasts" class="toasts"></div>
+<script src="/app.js"></script>
+<script src="/browse.js"></script>
+</body>
+</html>

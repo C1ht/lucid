@@ -1,0 +1,38 @@
+# --- secrets and local state (never commit) ---
+.env
+*.env
+settings.json
+jobs.json
+config.toml
+*.db
+config/
+music/
+staging/
+leftover/
+
+# --- build output ---
+backend/dist/
+backend/build/
+*.spec
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
+desktop/node_modules/
+desktop/dist/
+dist/
+build/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+.build-venv/
+venv/
+
+# --- editors / OS / logs ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log

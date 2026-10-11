@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lucid</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .wrap { text-align: center; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 16px;
+    border: 2px solid rgba(255,255,255,0.18); border-top-color: #fff; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  p { color: rgba(235,235,245,0.6); font-size: 13px; }
+  #status { margin-top: 6px; font-size: 11.5px; color: rgba(235,235,245,0.3); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="spinner"></div>
+    <p>Starting Lucid…</p>
+    <div id="status"></div>
+  </div>
+</body>
+</html>
