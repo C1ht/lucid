@@ -275,8 +275,8 @@ function applyQobuzTokenMode() {
   qs("qobuz-id-label").textContent = useToken ? "User ID" : "Email or user ID";
   qs("qobuz-pwd-label").textContent = useToken ? "Auth token" : "Password";
   qs("qobuz-pwd-hint").textContent = useToken
-    ? "From play.qobuz.com's user/login response — see instructions below"
-    : "Your account password — hashed automatically, never sent as plaintext";
+    ? "From play.qobuz.com's user/login response, see the steps below"
+    : "Your account password, hashed before it's sent";
   qs("qobuz-token-help").hidden = !useToken;
 }
 

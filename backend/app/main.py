@@ -3,8 +3,10 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from . import config_store, navidrome, paths
+from .monitor import monitor
 from .browse import BrowseError, browser
 from .jobs import manager
 from .schemas import (
@@ -28,6 +30,7 @@ async def on_startup() -> None:
     paths.ensure_dirs()
     config_store.ensure_streamrip_config()
     manager.start()
+    monitor.start()
 
 
 @app.get("/api/health")
@@ -128,6 +131,47 @@ async def get_job(job_id: str) -> dict:
     return job.model_dump()
 
 
+class MonitorArtistRequest(BaseModel):
+    id: str
+
+
+class MonitorScheduleRequest(BaseModel):
+    enabled: bool
+    time: str
+
+
+@app.get("/api/monitor", dependencies=[Depends(require_auth)])
+async def get_monitor() -> dict:
+    return monitor.state()
+
+
+@app.put("/api/monitor/schedule", dependencies=[Depends(require_auth)])
+async def put_monitor_schedule(req: MonitorScheduleRequest) -> dict:
+    try:
+        return monitor.set_schedule(req.enabled, req.time)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/monitor/artists", dependencies=[Depends(require_auth)])
+async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
+    try:
+        return await monitor.add_artist(req.id)
+    except BrowseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.delete("/api/monitor/artists/{artist_id}", dependencies=[Depends(require_auth)])
+async def remove_monitored_artist(artist_id: str) -> dict:
+    return monitor.remove_artist(artist_id)
+
+
+@app.post("/api/monitor/check", dependencies=[Depends(require_auth)])
+async def check_monitor_now() -> dict:
+    await monitor.run_check()
+    return monitor.state()
+
+
 @app.websocket("/api/ws")
 async def ws_events(websocket: WebSocket) -> None:
     if not check_header(websocket.headers.get("authorization")):
@@ -172,4 +216,5 @@ async def font() -> FileResponse:
 app.get("/", dependencies=[Depends(require_auth)])(_serve("index.html", "text/html"))
 app.get("/styles.css", dependencies=[Depends(require_auth)])(_serve("styles.css", "text/css"))
 app.get("/app.js", dependencies=[Depends(require_auth)])(_serve("app.js", "application/javascript"))
+app.get("/monitor.js", dependencies=[Depends(require_auth)])(_serve("monitor.js", "application/javascript"))
 app.get("/browse.js", dependencies=[Depends(require_auth)])(_serve("browse.js", "application/javascript"))

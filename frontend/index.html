@@ -26,6 +26,10 @@
         <span>Queue</span>
         <span class="count-badge" id="queue-count" hidden>0</span>
       </button>
+      <button class="nav-item" data-view="monitor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9a6 6 0 1112 0c0 5 2 6.5 2 6.5H4S6 14 6 9z"/><path d="M10 19a2 2 0 004 0"/></svg>
+        <span>Monitor</span>
+      </button>
       <button class="nav-item" data-view="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
         <span>Settings</span>
@@ -75,6 +79,29 @@
       <div id="job-empty" class="empty-state"><p>No downloads yet.</p></div>
     </section>
 
+    <section id="view-monitor" class="view">
+      <header class="view-header"><h1>Monitor</h1><p>Check monitored artists once a day and download any new release automatically.</p></header>
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Daily check</h2>
+          <label class="switch"><input type="checkbox" id="mon-enabled"><span class="slider"></span></label>
+        </div>
+        <div class="field-grid">
+          <label>Check at
+            <input class="input" id="mon-time" type="time" value="03:00">
+          </label>
+        </div>
+        <div class="panel-actions">
+          <button type="button" class="btn btn-accent" id="mon-save">Save</button>
+          <button type="button" class="btn btn-outline" id="mon-check">Check now</button>
+          <span id="mon-last" class="test-result"></span>
+        </div>
+        <p class="panel-note">Only releases that appear after you start monitoring an artist are downloaded, never their back catalogue. Add artists with the Monitor button on their artist page. Times use the server clock (<span id="mon-tz"></span>).</p>
+      </div>
+      <div id="mon-list" class="job-list"></div>
+      <div id="mon-empty" class="empty-state"><p>No artists monitored yet.</p></div>
+    </section>
+
     <section id="view-settings" class="view">
       <header class="view-header"><h1>Settings</h1><p>Credentials are stored on disk in the config volume.</p></header>
       <form id="settings-form">
@@ -88,10 +115,10 @@
             Qobuz album/track downloads get re-tagged after download with proper
             multi-artist, role, and compilation tags instead of streamrip's own
             joined-string defaults. See <code>docs/navidrome-tagging.md</code> for the
-            full mapping. Phase 1: Qobuz only — Tidal/Deezer/SoundCloud are unaffected for now.
+            full mapping. Only Qobuz downloads are re-tagged for now.
           </p>
           <div class="field-grid">
-            <label>Navidrome version<span class="hint">Gates which tags are safe to write — set this to match your server</span>
+            <label>Navidrome version<span class="hint">Controls which tags are safe to write. Match it to your server</span>
               <select class="select" id="tagging-tier">
                 <option value="pre_0_45">Below 0.45.0 (no multi-valued tags at all)</option>
                 <option value="0_45_to_0_50">0.45.0 – 0.50.x (multi-valued tags, no role tags)</option>
@@ -126,17 +153,17 @@
           <p class="panel-note">
             Qobuz's email+password login is currently broken on their end for
             third-party apps (401 "Invalid credentials" even with a correct
-            password). Use an auth token instead — switch it on below.
+            password). Use an auth token instead; switch it on below.
           </p>
           <div class="field-grid">
             <label class="checkbox-row"><input type="checkbox" id="qobuz-use-token"> Use auth token instead of email/password (recommended)</label>
             <label><span id="qobuz-id-label">Email or user ID</span><input class="input" id="qobuz-email"></label>
-            <label><span id="qobuz-pwd-label">Password</span><span class="hint" id="qobuz-pwd-hint">Your account password — hashed automatically, never sent as plaintext</span><input class="input" id="qobuz-password" type="password" placeholder="(unchanged)"></label>
+            <label><span id="qobuz-pwd-label">Password</span><span class="hint" id="qobuz-pwd-hint">Your account password, hashed before it's sent</span><input class="input" id="qobuz-password" type="password" placeholder="(unchanged)"></label>
             <label>Quality<select class="select" id="qobuz-quality">
-              <option value="1">1 — 320kbps MP3</option>
-              <option value="2">2 — 16-bit/44.1kHz FLAC</option>
-              <option value="3" selected>3 — 24-bit/≤96kHz</option>
-              <option value="4">4 — 24-bit/≥96kHz</option>
+              <option value="1">1: 320kbps MP3</option>
+              <option value="2">2: 16-bit/44.1kHz FLAC</option>
+              <option value="3" selected>3: 24-bit/≤96kHz</option>
+              <option value="4">4: 24-bit/≥96kHz</option>
             </select></label>
           </div>
           <div id="qobuz-token-help" class="panel-note" hidden>
@@ -147,7 +174,7 @@
               <li>Find the request to <code>user/login</code> and open its response.</li>
               <li>Copy <code>user.id</code> into "User ID" and <code>user_auth_token</code> into "Auth token" below.</li>
             </ol>
-            It's a session credential, not a one-time secret — if downloads start failing again later, re-extract it the same way.
+            It's a session credential, not a one-time secret. If downloads start failing later, grab a fresh one the same way.
           </div>
         </div>
 
@@ -159,10 +186,10 @@
           <p class="panel-note">Tidal login requires a one-time interactive step. Run <code>podman exec -it lucid rip config --tidal</code> after starting the container, then refresh this page.</p>
           <div class="field-grid">
             <label>Quality<select class="select" id="tidal-quality">
-              <option value="0">0 — 256kbps AAC</option>
-              <option value="1">1 — 320kbps AAC</option>
-              <option value="2">2 — 16-bit/44.1kHz FLAC</option>
-              <option value="3" selected>3 — 24-bit/44.1kHz MQA</option>
+              <option value="0">0: 256kbps AAC</option>
+              <option value="1">1: 320kbps AAC</option>
+              <option value="2">2: 16-bit/44.1kHz FLAC</option>
+              <option value="3" selected>3: 24-bit/44.1kHz MQA</option>
             </select></label>
           </div>
         </div>
@@ -175,9 +202,9 @@
           <div class="field-grid">
             <label>ARL cookie<span class="hint">From your logged-in browser session on deezer.com</span><input class="input" id="deezer-arl" type="password" placeholder="(unchanged)"></label>
             <label>Quality<select class="select" id="deezer-quality">
-              <option value="0">0 — 128kbps MP3</option>
-              <option value="1">1 — 320kbps MP3</option>
-              <option value="2" selected>2 — FLAC</option>
+              <option value="0">0: 128kbps MP3</option>
+              <option value="1">1: 320kbps MP3</option>
+              <option value="2" selected>2: FLAC</option>
             </select></label>
           </div>
         </div>
@@ -222,7 +249,7 @@
           <div class="panel-header"><h2>Downloads location &amp; naming</h2></div>
           <div class="field-grid" id="dl-absolute-row" hidden>
             <label class="checkbox-row">Download folder
-              <span class="hint">Picked via the native folder dialog — overrides the subfolder setting below</span>
+              <span class="hint">Picked with the folder dialog. Overrides the subfolder below</span>
               <span class="path-picker">
                 <input class="input mono" id="dl-absolute-path" readonly placeholder="(using default)">
                 <button type="button" class="btn btn-outline btn-small" id="dl-browse-btn">Browse…</button>
@@ -231,7 +258,7 @@
             </label>
           </div>
           <div class="field-grid">
-            <label>Subfolder within the music volume<span class="hint">Relative path under /music — leave blank to use the mount root</span><input class="input mono" id="dl-subfolder" placeholder="e.g. streamrip"></label>
+            <label>Subfolder within the music volume<span class="hint">Relative to /music. Leave blank to use the root</span><input class="input mono" id="dl-subfolder" placeholder="e.g. streamrip"></label>
             <label>Folder format<input class="input mono" id="fp-folder-format"></label>
             <label>Track format<input class="input mono" id="fp-track-format"></label>
             <label class="checkbox-row"><input type="checkbox" id="fp-restrict-chars"> Restrict to printable ASCII filenames</label>
@@ -251,5 +278,6 @@
 <div id="toasts" class="toasts"></div>
 <script src="/app.js"></script>
 <script src="/browse.js"></script>
+<script src="/monitor.js"></script>
 </body>
 </html>

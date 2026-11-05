@@ -313,7 +313,7 @@ class QobuzBrowser:
 
         return await self._cached(f"playlist:{playlist_id}", build)
 
-    async def artist(self, artist_id: str) -> dict:
+    async def artist(self, artist_id: str, fresh: bool = False) -> dict:
         async def build() -> dict:
             a = await self._metadata(artist_id, "artist")
             bio = a.get("biography") or {}
@@ -335,6 +335,9 @@ class QobuzBrowser:
                 "albums": albums,
             }
 
+        if fresh:
+            # The monitor needs the live release list, not a copy cached up to 5 minutes ago.
+            self._cache.pop(f"artist:{artist_id}", None)
         return await self._cached(f"artist:{artist_id}", build)
 
 

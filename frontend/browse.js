@@ -31,6 +31,7 @@
     artistFilter: "all",
     selecting: false,
     selection: new Set(),
+    monitored: new Set(),
   };
 
   const body = () => qs("browse-body");
@@ -380,6 +381,12 @@
       <div id="artist-grid"></div>`;
     renderArtistControls();
     renderArtistGrid();
+    api("/api/monitor")
+      .then((m) => {
+        state.monitored = new Set(m.artists.map((a) => a.id));
+        if (state.current && state.current.type === "artist" && state.current.data === d) renderArtistControls();
+      })
+      .catch(() => {});
   }
 
   function renderArtistControls() {
@@ -392,11 +399,13 @@
       )
       .join("");
     const n = state.selection.size;
-    const actions = state.selecting
+    const watching = state.monitored.has(d.id);
+    const monBtn = `<button type="button" class="btn btn-small ${watching ? "btn-accent" : "btn-outline"}" data-act="monitor-toggle">${watching ? "Monitoring" : "Monitor"}</button>`;
+    const actions = monBtn + (state.selecting
       ? `<button type="button" class="btn btn-outline btn-small" data-act="select-all">Select all</button>
          <button type="button" class="btn btn-accent btn-small btn-icon" data-act="dl-selected" ${n ? "" : "disabled"}>${ICON.download}Download ${n ? `(${n})` : "selected"}</button>
          <button type="button" class="btn btn-outline btn-small" data-act="select-toggle">Cancel</button>`
-      : `<button type="button" class="btn btn-outline btn-small" data-act="select-toggle">Select</button>`;
+      : `<button type="button" class="btn btn-outline btn-small" data-act="select-toggle">Select</button>`);
     qs("artist-bar").innerHTML = `<div class="chips">${chips}</div><div class="artist-actions">${actions}</div>`;
   }
 
@@ -626,6 +635,21 @@
         renderArtistControls();
         renderArtistGrid();
         return;
+      case "monitor-toggle": {
+        const d = state.current.data;
+        const on = state.monitored.has(d.id);
+        const req = on
+          ? api(`/api/monitor/artists/${encodeURIComponent(d.id)}`, { method: "DELETE" })
+          : api("/api/monitor/artists", { method: "POST", body: JSON.stringify({ id: d.id }) });
+        return req
+          .then((m) => {
+            state.monitored = new Set(m.artists.map((a) => a.id));
+            showToast(on ? `Stopped monitoring ${d.name}` : `Monitoring ${d.name}`, "ok");
+            renderArtistControls();
+            document.dispatchEvent(new Event("monitor-changed"));
+          })
+          .catch((err) => showToast(err.message, "bad"));
+      }
       case "select-toggle":
         state.selecting = !state.selecting;
         state.selection.clear();
