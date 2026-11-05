@@ -36,6 +36,10 @@ function initNav() {
       qs(`view-${btn.dataset.view}`).classList.add("active");
     });
   });
+  qs("brand").addEventListener("click", () => {
+    document.querySelector('.nav-item[data-view="search"]').click();
+    document.querySelector(".content").scrollTop = 0;
+  });
 }
 
 /* ---------- Helpers ---------- */

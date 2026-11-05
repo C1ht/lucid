@@ -86,6 +86,13 @@ input:focus-visible, select:focus-visible { outline: none; }
 }
 
 .brand {
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 9px;
