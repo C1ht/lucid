@@ -19,14 +19,14 @@ from .staging import iter_audio_files
 from .writer import apply_tags
 
 
-def _read_existing_track_disc(path: Path) -> Optional[tuple[int, int]]:
+def _read_existing_disc_track(path: Path) -> Optional[tuple[int, int]]:
     ext = path.suffix.lower()
     try:
         if ext == ".flac":
             audio = FLAC(str(path))
             track = (audio.get("tracknumber") or ["1"])[0]
             disc = (audio.get("discnumber") or ["1"])[0]
-            return int(str(track).split("/")[0]), int(str(disc).split("/")[0])
+            return int(str(disc).split("/")[0]), int(str(track).split("/")[0])
         if ext == ".mp3":
             try:
                 audio = ID3(str(path))
@@ -36,7 +36,7 @@ def _read_existing_track_disc(path: Path) -> Optional[tuple[int, int]]:
             tpos = audio.get("TPOS")
             track = str(trck.text[0]).split("/")[0] if trck else "1"
             disc = str(tpos.text[0]).split("/")[0] if tpos else "1"
-            return int(track), int(disc)
+            return int(disc), int(track)
     except (ValueError, OSError):
         return None
     return None
@@ -82,7 +82,7 @@ def _apply_plan_to_staging(
         return notes, retagged_count, skipped
 
     for file_path in files:
-        key = _read_existing_track_disc(file_path)
+        key = _read_existing_disc_track(file_path)
         track_plan = by_key.get(key) if key else None
 
         if track_plan is None:
