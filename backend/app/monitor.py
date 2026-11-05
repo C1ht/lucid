@@ -1,15 +1,18 @@
-"""Artist monitoring: once a day at a set time, re-check each monitored
-artist's Qobuz release list and queue a download for anything new.
+"""Artist monitoring: when an artist is added, and then once a day at a set
+time, compare their Qobuz releases against streamrip's downloads database and
+queue every release that has tracks we don't have yet.
 
-When an artist is first added, their current releases are recorded as already
-known, so only releases that appear afterwards are downloaded (never the back
-catalogue). Timing uses the process's local time; set the TZ environment
-variable on the container to schedule in your own timezone.
+A release is handled once: it is queued (or found complete) and remembered, so
+later checks only look at releases that are new to the artist's page. A queued
+release whose download failed is retried at the next check. Timing uses the
+process's local time; set the TZ environment variable on the container to
+schedule in your own timezone.
 """
 
 import asyncio
 import json
 import re
+import sqlite3
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -33,6 +36,15 @@ def _releases(artist: dict) -> list[dict]:
     return primary or albums
 
 
+def _downloaded_ids() -> set[str]:
+    """Track IDs streamrip has already downloaded (its own dedupe database)."""
+    try:
+        with sqlite3.connect(f"file:{paths.DOWNLOADS_DB_PATH}?mode=ro", uri=True) as conn:
+            return {str(row[0]) for row in conn.execute("SELECT id FROM downloads")}
+    except sqlite3.Error:
+        return set()
+
+
 def _is_released(album: dict) -> bool:
     # Qobuz lists upcoming albums early; downloading one would just fail, so
     # wait until its release date arrives and leave it unrecorded until then.
@@ -48,6 +60,7 @@ class Monitor:
         self.artists: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
+        self._syncs: set[asyncio.Task] = set()
         self._load()
 
     # ---------- persistence ----------
@@ -86,7 +99,7 @@ class Monitor:
             "time": self.time,
             "last_run_at": self.last_run_at,
             "timezone": _now().tzname(),
-            "artists": [{k: v for k, v in a.items() if k != "known"} for a in artists],
+            "artists": [{k: v for k, v in a.items() if k not in ("known", "jobs")} for a in artists],
         }
 
     # ---------- management ----------
@@ -105,12 +118,17 @@ class Monitor:
             "name": artist["name"],
             "image": artist.get("image"),
             "added_at": _now().isoformat(),
-            "known": [a["id"] for a in _releases(artist)],
+            "known": [],
+            "jobs": {},
             "last_checked": None,
             "last_found": None,
             "last_error": None,
         }
         self._save()
+        # Walking a whole back catalogue takes a while; don't hold up the request.
+        task = asyncio.create_task(self._sync_one(artist_id))
+        self._syncs.add(task)
+        task.add_done_callback(self._syncs.discard)
         return self.state()
 
     def remove_artist(self, artist_id: str) -> dict:
@@ -131,8 +149,26 @@ class Monitor:
             self.last_run_date = _now().date().isoformat()
             self._save()
 
+    async def _sync_one(self, artist_id: str) -> None:
+        async with self._lock:
+            entry = self.artists.get(artist_id)
+            if entry:
+                await self._check_artist(entry)
+                self._save()
+
+    def _forget_failed(self, entry: dict) -> None:
+        """Let releases whose download failed (or was interrupted) be tried again."""
+        for album_id, job_id in list(entry["jobs"].items()):
+            job = manager.jobs.get(job_id)
+            if job and job.status in ("failed", "canceled"):
+                del entry["jobs"][album_id]
+                if album_id in entry["known"]:
+                    entry["known"].remove(album_id)
+
     async def _check_artist(self, entry: dict) -> None:
         entry["last_checked"] = _now().isoformat()
+        entry.setdefault("jobs", {})
+        self._forget_failed(entry)
         try:
             artist = await browser.artist(entry["id"], fresh=True)
         except BrowseError as exc:
@@ -141,18 +177,32 @@ class Monitor:
         entry["last_error"] = None
         entry["name"] = artist["name"]
 
+        have = _downloaded_ids()
         known = set(entry["known"])
+        queued: list[str] = []
         for album in _releases(artist):
             if album["id"] in known or not _is_released(album):
                 continue
+            try:
+                detail = await browser.album(album["id"])
+            except BrowseError as exc:
+                entry["last_error"] = str(exc)  # leave it unrecorded; retried next check
+                continue
+            await asyncio.sleep(0.3)  # be gentle with the API
+            entry["known"].append(album["id"])
+            if all(t["id"] in have for t in detail["tracks"]):
+                continue
             label = f"{album['title']} by {album['artist']}"
-            manager.enqueue(
+            job = manager.enqueue(
                 "id",
                 f"[Monitor] {label}",
                 {"source": "qobuz", "media_type": "album", "id": album["id"], "desc": label},
             )
-            entry["known"].append(album["id"])
-            entry["last_found"] = {"title": album["title"], "at": _now().isoformat()}
+            entry["jobs"][album["id"]] = job.id
+            queued.append(album["title"])
+        if queued:
+            title = queued[0] if len(queued) == 1 else f"{len(queued)} releases"
+            entry["last_found"] = {"title": title, "at": _now().isoformat()}
 
     # ---------- scheduler ----------
 

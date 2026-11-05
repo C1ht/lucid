@@ -644,7 +644,7 @@
         return req
           .then((m) => {
             state.monitored = new Set(m.artists.map((a) => a.id));
-            showToast(on ? `Stopped monitoring ${d.name}` : `Monitoring ${d.name}`, "ok");
+            showToast(on ? `Stopped monitoring ${d.name}` : `Monitoring ${d.name}. Missing releases are being queued.`, "ok");
             renderArtistControls();
             document.dispatchEvent(new Event("monitor-changed"));
           })

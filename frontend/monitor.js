@@ -17,7 +17,7 @@
         const status = a.last_error
           ? `<span class="mon-error">${esc(a.last_error)}</span>`
           : a.last_found
-            ? `Last new release: ${esc(a.last_found.title)} (${fmt(a.last_found.at)})`
+            ? `Last queued: ${esc(a.last_found.title)} (${fmt(a.last_found.at)})`
             : `Checked ${fmt(a.last_checked)}`;
         return `<div class="mon-row">
           <div class="mon-info"><div class="mon-name">${esc(a.name)}</div><div class="mon-status">${status}</div></div>
