@@ -14,7 +14,7 @@ It ships two ways from one codebase:
 - **Navidrome-friendly tagging.** Streamrip joins multiple artists into one string (`"Alice, Bob"`), which Navidrome turns into a single phantom artist. Lucid re-tags Qobuz downloads from the structured API data instead, so artists, roles, compilations and multi-disc albums come out right. See [docs/navidrome-tagging.md](docs/navidrome-tagging.md).
 - **Safe moves into your library.** Each job downloads into its own staging folder and is moved in only when finished (via a `.part` rename, so Navidrome never indexes half a file). A lower-quality file never overwrites a higher-quality one.
 - **Navidrome rescan on completion** through the Subsonic API.
-- **Sources:** Qobuz, Tidal, Deezer, SoundCloud, plus last.fm playlists. Search and browsing is Qobuz-only; the other sources work by pasting a link.
+- **Sources:** Qobuz, Tidal, Deezer, SoundCloud, plus last.fm playlists. Browsing is Qobuz-only; the other sources work by pasting a link. YouTube (optional, via yt-dlp) also shows up in Search. Its audio is lossy and is saved as YouTube serves it (Opus or AAC), never converted to FLAC. If YouTube asks you to sign in, paste a cookies.txt under Settings > YouTube.
 - **Desktop extras:** native folder picker for the download location.
 
 ## Quick start (container)

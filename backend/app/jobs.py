@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve
+from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve, youtube
 from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut, JobStatus
 from .tagging import retag
 from .tagging import staging as tagging_staging
@@ -205,7 +205,9 @@ class JobManager:
             returncode = await self._execute(job, on_line)
             job.status = "success" if returncode == 0 else "failed"
             if returncode != 0:
-                job.error = f"rip exited with code {returncode}"
+                job.error = f"Download failed (exit code {returncode}), see the log"
+                if any("Sign in to confirm" in line for line in job.log[-20:]):
+                    job.error = "YouTube wants a signed-in session. Add cookies under Settings > YouTube."
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             job.status = "failed"
             job.error = str(exc)
@@ -233,12 +235,17 @@ class JobManager:
             item_id: Optional[str] = None
             tagging_pref: Optional[bool] = None
 
+            yt_url: Optional[str] = None
             if job.kind == "id":
                 req: Any = DownloadByIdRequest.model_validate(job.payload)
                 source, media_type, item_id = req.source, req.media_type, req.id
                 tagging_pref = req.navidrome_tagging
+                if source == "youtube":
+                    yt_url = youtube.watch_url(req.id)
             else:
                 req = DownloadByUrlRequest.model_validate(job.payload)
+                if youtube.is_youtube_url(req.url):
+                    source, yt_url = "youtube", req.url
                 parsed = url_resolve.parse_generic_url(req.url)
                 if parsed:
                     source, media_type, item_id = parsed
@@ -276,7 +283,9 @@ class JobManager:
             tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
             tracker.start()
             try:
-                if job.kind == "id":
+                if yt_url:
+                    returncode = await youtube.download(yt_url, staging_dir, on_line)
+                elif job.kind == "id":
                     returncode = await streamrip_cli.download_by_id(req, on_line, folder_override=str(staging_dir))
                 else:
                     returncode = await streamrip_cli.download_by_url(req, on_line, folder_override=str(staging_dir))

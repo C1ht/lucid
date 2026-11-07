@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config_store, navidrome, paths
+from . import config_store, navidrome, paths, youtube
 from .monitor import monitor
 from .browse import BrowseError, browser
 from .jobs import manager
@@ -84,6 +84,22 @@ async def browse_search(q: str) -> dict:
     return await _browse(browser.search)(q)
 
 
+def _require_youtube() -> None:
+    if not config_store.load_settings().youtube.enabled:
+        raise HTTPException(status_code=400, detail="YouTube is turned off. Enable it in Settings.")
+
+
+@app.get("/api/browse/youtube", dependencies=[Depends(require_auth)])
+async def browse_youtube(q: str) -> dict:
+    _require_youtube()
+    if len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Type at least 2 characters")
+    try:
+        return {"query": q.strip(), "items": await youtube.search(q)}
+    except youtube.YoutubeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/api/browse/album/{album_id}", dependencies=[Depends(require_auth)])
 async def browse_album(album_id: str) -> dict:
     return await _browse(browser.album)(album_id)
@@ -106,6 +122,8 @@ async def browse_playlist(playlist_id: str) -> dict:
 
 @app.post("/api/download", dependencies=[Depends(require_auth)])
 async def download_by_id(req: DownloadByIdRequest) -> dict:
+    if req.source == "youtube":
+        _require_youtube()
     label = req.desc or f"{req.source} {req.media_type} {req.id}"
     job = manager.enqueue("id", label, req.model_dump())
     return job.model_dump()
@@ -113,6 +131,8 @@ async def download_by_id(req: DownloadByIdRequest) -> dict:
 
 @app.post("/api/download/url", dependencies=[Depends(require_auth)])
 async def download_by_url(req: DownloadByUrlRequest) -> dict:
+    if youtube.is_youtube_url(req.url):
+        _require_youtube()
     label, _meta = await resolve_url_label(req.url)
     job = manager.enqueue("url", label, req.model_dump())
     return job.model_dump()

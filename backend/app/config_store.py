@@ -6,7 +6,7 @@ from pathlib import Path
 
 import tomlkit
 
-from . import paths
+from . import paths, youtube
 from .schemas import SECRET_UNCHANGED, Settings
 from .streamrip_template import DEFAULT_CONFIG_TOML
 
@@ -20,6 +20,7 @@ _SECRET_FIELDS = {
     ("tidal", "refresh_token"),
     ("deezer", "arl"),
     ("soundcloud", "client_id"),
+    ("youtube", "cookies"),
     ("navidrome", "password"),
 }
 
@@ -55,7 +56,17 @@ def save_settings(incoming: Settings) -> Settings:
         with paths.APP_SETTINGS_PATH.open("w", encoding="utf-8") as f:
             json.dump(settings.model_dump(), f, indent=2)
         write_streamrip_config(settings)
+        _write_youtube_cookies(settings.youtube.cookies)
         return settings
+
+
+def _write_youtube_cookies(cookies: str) -> None:
+    path = youtube.COOKIES_PATH
+    if not cookies.strip():
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(cookies.strip() + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _packaged_default_doc():

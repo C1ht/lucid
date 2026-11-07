@@ -24,7 +24,7 @@ def _base_args(folder_override: Optional[str] = None) -> list[str]:
     return args
 
 
-async def _run_streaming(args: list[str], on_line: Optional[LineCallback]) -> int:
+async def run_streaming(args: list[str], on_line: Optional[LineCallback]) -> int:
     # stdin is explicitly closed: if a source needs credentials that aren't
     # configured, `rip` falls back to an interactive prompt instead of a clean
     # error. Without this, that prompt would hang the single-worker queue
@@ -62,7 +62,7 @@ async def download_by_id(
     req: DownloadByIdRequest, on_line: Optional[LineCallback], folder_override: Optional[str] = None
 ) -> int:
     args = _base_args(folder_override) + ["id", req.source, req.media_type, req.id]
-    return await _run_streaming(args, on_line)
+    return await run_streaming(args, on_line)
 
 
 async def download_by_url(
@@ -72,7 +72,7 @@ async def download_by_url(
         args = _base_args(folder_override) + ["lastfm", req.url]
     else:
         args = _base_args(folder_override) + ["url", req.url]
-    return await _run_streaming(args, on_line)
+    return await run_streaming(args, on_line)
 
 
 async def search(source: str, media_type: str, query: str) -> list[SearchResult]:

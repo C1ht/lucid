@@ -252,7 +252,8 @@ async function loadSettings() {
   qs("soundcloud-app-version").value = s.soundcloud.app_version;
 
   qs("youtube-enabled").checked = s.youtube.enabled;
-  qs("youtube-videos").checked = s.youtube.download_videos;
+  qs("youtube-cookies").placeholder = s.youtube.cookies_set ? "(saved, paste to replace)" : "# Netscape HTTP Cookie File";
+  window.youtubeEnabled = s.youtube.enabled;
 
   qs("conv-enabled").checked = s.conversion.enabled;
   qs("conv-codec").value = s.conversion.codec;
@@ -311,7 +312,7 @@ function collectSettings() {
     },
     youtube: {
       enabled: qs("youtube-enabled").checked,
-      download_videos: qs("youtube-videos").checked,
+      cookies: qs("youtube-cookies").value,
     },
     conversion: {
       enabled: qs("conv-enabled").checked,
@@ -382,6 +383,8 @@ function initSettings() {
     const resultEl = qs("settings-save-result");
     try {
       await api("/api/settings", { method: "PUT", body: JSON.stringify(collectSettings()) });
+      window.youtubeEnabled = qs("youtube-enabled").checked;
+      qs("youtube-cookies").value = "";
       resultEl.textContent = "Saved";
       resultEl.className = "test-result ok";
       showToast("Settings saved", "ok");

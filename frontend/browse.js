@@ -1,6 +1,6 @@
 /* Search + catalog browsing: results, album / artist / track / playlist pages,
    and opening pasted links directly. Depends on helpers from app.js
-   (qs, api, showToast, escapeHtml). Qobuz only -- see backend/app/browse.py. */
+   (qs, api, showToast, escapeHtml). Qobuz, plus YouTube search when it's enabled in Settings. */
 
 (() => {
   const esc = escapeHtml;
@@ -75,6 +75,8 @@
   const dlButton = (kind, id, label, cls = "icon-btn dl-btn") =>
     `<button type="button" class="${cls}" data-dl="${attr(kind + ":" + id)}" data-label="${attr(label)}" title="Download">${ICON.download}</button>`;
 
+  const ytEnabled = () => !!window.youtubeEnabled;
+
   const labelAlbum = (a) => `${a.title} by ${a.artist}`;
   const labelTrack = (t) => (t.artist ? `${t.artist} - ${t.title}` : t.title);
 
@@ -135,6 +137,19 @@
       </div>`;
   }
 
+  function youtubeRow(v) {
+    return `
+      <div class="row">
+        ${cover(v.thumbnail, "thumb")}
+        <div class="row-main">
+          <div class="row-title">${esc(v.title)}</div>
+          <div class="row-sub">${esc(v.channel)}</div>
+        </div>
+        <span class="row-time">${esc(fmtDuration(v.duration))}</span>
+        ${dlButton("yt", v.id, v.channel ? `${v.channel} - ${v.title}` : v.title)}
+      </div>`;
+  }
+
   function playlistRow(p) {
     const sub = [p.owner, p.tracks_count ? plural(p.tracks_count, "track") : ""].filter(Boolean).join(" · ");
     return `
@@ -156,7 +171,9 @@
     { key: "artists", chip: "Artists", title: "Artists", limit: 6 },
     { key: "tracks", chip: "Songs", title: "Songs", limit: 6 },
     { key: "playlists", chip: "Playlists", title: "Playlists", limit: 4 },
+    { key: "youtube", chip: "YouTube", title: "YouTube", limit: 8 },
   ];
+  const activeSections = () => SECTIONS.filter((s) => s.key !== "youtube" || ytEnabled());
 
   function renderChips() {
     const r = state.results;
@@ -164,7 +181,7 @@
     toolbar.hidden = !(state.current && state.current.type === "results" && r);
     if (toolbar.hidden) return;
     const chips = [{ key: "all", label: "Show all", count: null }].concat(
-      SECTIONS.map((s) => ({ key: s.key, label: s.chip, count: r[s.key].length }))
+      activeSections().map((s) => ({ key: s.key, label: s.chip, count: r[s.key].length }))
     );
     qs("filter-chips").innerHTML = chips
       .map(
@@ -183,6 +200,7 @@
     if (sec.key === "albums") inner = `<div class="grid">${shown.map((a) => albumCard(a)).join("")}</div>`;
     else if (sec.key === "artists") inner = `<div class="grid grid-artists">${shown.map(artistCard).join("")}</div>`;
     else if (sec.key === "tracks") inner = `<div class="rows">${shown.map(trackResultRow).join("")}</div>`;
+    else if (sec.key === "youtube") inner = `<div class="rows">${shown.map(youtubeRow).join("")}</div>`;
     else inner = `<div class="rows">${shown.map(playlistRow).join("")}</div>`;
     const more =
       !showAll && items.length > shown.length
@@ -198,21 +216,23 @@
       body().innerHTML = idleHtml();
       return;
     }
-    const total = SECTIONS.reduce((n, s) => n + r[s.key].length, 0);
+    const active = activeSections();
+    const total = active.reduce((n, s) => n + r[s.key].length, 0);
+    const warn = (r.errors || []).map((m) => noticeHtml(m, /Settings/i.test(m))).join("");
     if (!total) {
-      body().innerHTML = noticeHtml(`No results for “${r.query}”.`);
+      body().innerHTML = warn || noticeHtml(`No results for “${r.query}”.`);
       return;
     }
     const sections =
       state.filter === "all"
-        ? SECTIONS.map((s) => sectionHtml(s, r[s.key], false))
-        : SECTIONS.filter((s) => s.key === state.filter).map((s) => sectionHtml(s, r[s.key], true));
-    body().innerHTML = sections.join("") || noticeHtml("Nothing here.");
+        ? active.map((s) => sectionHtml(s, r[s.key], false))
+        : active.filter((s) => s.key === state.filter).map((s) => sectionHtml(s, r[s.key], true));
+    body().innerHTML = warn + (sections.join("") || noticeHtml("Nothing here."));
   }
 
   function idleHtml() {
     return `<div class="idle">
-      <p class="idle-title">Search Qobuz</p>
+      <p class="idle-title">Search ${ytEnabled() ? "Qobuz and YouTube" : "Qobuz"}</p>
       <p>Find artists, albums, songs and playlists, or paste a link to open it directly.</p>
     </div>`;
   }
@@ -546,17 +566,25 @@
     qs("search-title").hidden = false;
     body().innerHTML = loadingHtml("Searching…");
     qs("browse-toolbar").hidden = true;
-    try {
-      const data = await api(`/api/browse/search?q=${encodeURIComponent(q)}`);
-      if (mine !== state.reqId) return;
-      state.results = data;
-      state.filter = "all";
-      renderResults();
-    } catch (err) {
-      if (mine !== state.reqId) return;
+    const enc = encodeURIComponent(q);
+    const [qobuz, yt] = await Promise.allSettled([
+      api(`/api/browse/search?q=${enc}`),
+      ytEnabled() ? api(`/api/browse/youtube?q=${enc}`) : Promise.resolve({ items: [] }),
+    ]);
+    if (mine !== state.reqId) return;
+    if (qobuz.status === "rejected" && (yt.status === "rejected" || !yt.value.items.length)) {
       state.results = null;
-      body().innerHTML = noticeHtml(err.message, /Settings/i.test(err.message));
+      body().innerHTML = noticeHtml(qobuz.reason.message, /Settings/i.test(qobuz.reason.message));
+      return;
     }
+    const data = qobuz.status === "fulfilled" ? qobuz.value : { query: q, albums: [], artists: [], tracks: [], playlists: [] };
+    data.youtube = yt.status === "fulfilled" ? yt.value.items : [];
+    data.errors = [];
+    if (qobuz.status === "rejected") data.errors.push(qobuz.reason.message);
+    if (yt.status === "rejected") data.errors.push(yt.reason.message);
+    state.results = data;
+    state.filter = "all";
+    renderResults();
   }
 
   /* ---------- downloads ---------- */
@@ -564,9 +592,16 @@
   async function queueDownload(kind, id, label) {
     const override = qs("tagging-override").value;
     const navidrome_tagging = override === "" ? null : override === "true";
+    const yt = kind === "yt";
     await api("/api/download", {
       method: "POST",
-      body: JSON.stringify({ source: "qobuz", media_type: kind, id, desc: label, navidrome_tagging }),
+      body: JSON.stringify({
+        source: yt ? "youtube" : "qobuz",
+        media_type: yt ? "track" : kind,
+        id,
+        desc: label,
+        navidrome_tagging,
+      }),
     });
   }
 

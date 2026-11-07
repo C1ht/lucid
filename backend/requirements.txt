@@ -3,3 +3,6 @@ uvicorn[standard]==0.30.6
 httpx==0.27.2
 pydantic==2.9.2
 streamrip==2.1.0
+# YouTube: yt-dlp does the work; it needs a JS runtime (deno) plus its challenge solver.
+yt-dlp[default]>=2026.10.26
+deno>=2.0

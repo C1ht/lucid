@@ -38,7 +38,11 @@ class SoundcloudSettings(BaseModel):
 
 class YoutubeSettings(BaseModel):
     enabled: bool = False
+    # Unused: streamrip has no YouTube client, so yt-dlp does the work and only saves audio.
     download_videos: bool = False
+    # Netscape-format cookies.txt. YouTube often answers "confirm you're not a bot" to
+    # servers and VPN addresses without one.
+    cookies: str = ""
 
 
 class ConversionSettings(BaseModel):
@@ -93,7 +97,7 @@ class Settings(BaseModel):
     navidrome: NavidromeSettings = Field(default_factory=NavidromeSettings)
 
 
-Source = Literal["qobuz", "tidal", "deezer", "soundcloud"]
+Source = Literal["qobuz", "tidal", "deezer", "soundcloud", "youtube"]
 MediaType = Literal["track", "album", "artist", "playlist", "label"]
 
 
