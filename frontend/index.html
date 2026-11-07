@@ -284,9 +284,44 @@
     <button type="button" class="btn btn-danger" id="confirm-ok">Delete</button>
   </div>
 </dialog>
+<dialog id="tags-dialog" class="dialog dialog-tags">
+  <form id="tags-form" autocomplete="off">
+    <h2>Custom tags</h2>
+    <p id="tags-sub" class="dialog-sub"></p>
+    <div class="tags-layout">
+      <div class="tags-cover">
+        <div class="tags-cover-img" id="tags-cover-img"></div>
+        <button type="button" class="btn btn-outline btn-small" id="tags-cover-pick">Replace cover</button>
+        <button type="button" class="link-btn" id="tags-cover-reset" hidden>Use original</button>
+        <input type="file" id="tags-cover-file" accept="image/*" hidden>
+      </div>
+      <div class="tags-fields">
+        <label>Title<input class="input" id="tg-title"></label>
+        <label>Artist
+          <span class="suggest-wrap"><input class="input" id="tg-artist" placeholder="Start typing to see Qobuz names"><ul class="suggest" id="tg-artist-list" hidden></ul></span>
+        </label>
+        <label>Album
+          <span class="suggest-wrap"><input class="input" id="tg-album"><ul class="suggest" id="tg-album-list" hidden></ul></span>
+        </label>
+        <label>Album artist<input class="input" id="tg-album-artist" placeholder="Same as artist"></label>
+        <div class="tags-trio">
+          <label>Year<input class="input" id="tg-year" inputmode="numeric" maxlength="4"></label>
+          <label>Track no.<input class="input" id="tg-track" inputmode="numeric" maxlength="3"></label>
+          <label>Genre<input class="input" id="tg-genre"></label>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Only fields you change are applied. The file is filed under Artist / Album, and suggestions use Qobuz's own spelling, so it matches what a Qobuz download of that artist would be tagged as.</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-outline" id="tags-cancel">Cancel</button>
+      <button type="submit" class="btn btn-accent" id="tags-ok">Download</button>
+    </div>
+  </form>
+</dialog>
 <div id="toasts" class="toasts"></div>
 <script src="/app.js"></script>
 <script src="/browse.js"></script>
+<script src="/tags.js"></script>
 <script src="/monitor.js"></script>
 </body>
 </html>

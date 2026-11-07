@@ -1,7 +1,10 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import httpx
+
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -17,6 +20,7 @@ from .schemas import (
     Settings,
 )
 from .security import check_header, require_auth
+from .tagging import custom as custom_tags
 from .streamrip_cli import search as rip_search
 from .url_resolve import resolve_url_label
 
@@ -108,6 +112,56 @@ async def browse_album(album_id: str) -> dict:
 @app.get("/api/browse/artist/{artist_id}", dependencies=[Depends(require_auth)])
 async def browse_artist(artist_id: str) -> dict:
     return await _browse(browser.artist)(artist_id)
+
+
+@app.get("/api/browse/suggest", dependencies=[Depends(require_auth)])
+async def browse_suggest(kind: str, q: str, artist: str = "") -> dict:
+    if kind not in ("artist", "album"):
+        raise HTTPException(status_code=400, detail="kind must be artist or album")
+    if len(q.strip()) < 2:
+        return {"items": []}
+    return {"items": await _browse(browser.suggest)(kind, q, artist)}
+
+
+COVER_MAX_BYTES = 12 * 1024 * 1024
+
+
+@app.post("/api/cover", dependencies=[Depends(require_auth)])
+async def upload_cover(request: Request) -> dict:
+    """Raw image bytes in the body; returns the id to put in custom_tags.cover_id."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="No image received")
+    if len(data) > COVER_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image is larger than 12 MB")
+    try:
+        return {"cover_id": custom_tags.save_cover(data)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class CoverFetchRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/cover/fetch", dependencies=[Depends(require_auth)])
+async def fetch_cover(req: CoverFetchRequest) -> dict:
+    """Use a Qobuz album's artwork as the cover. Only Qobuz's image host is allowed."""
+    host = (urlparse(req.url).hostname or "").lower()
+    if urlparse(req.url).scheme != "https" or not (host == "qobuz.com" or host.endswith(".qobuz.com")):
+        raise HTTPException(status_code=400, detail="Only Qobuz artwork can be fetched by link")
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            res = await client.get(req.url)
+        res.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't fetch the artwork: {exc}") from exc
+    if len(res.content) > COVER_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image is larger than 12 MB")
+    try:
+        return {"cover_id": custom_tags.save_cover(res.content)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/browse/preview/{track_id}", dependencies=[Depends(require_auth)])
@@ -277,3 +331,4 @@ app.get("/styles.css", dependencies=[Depends(require_auth)])(_serve("styles.css"
 app.get("/app.js", dependencies=[Depends(require_auth)])(_serve("app.js", "application/javascript"))
 app.get("/monitor.js", dependencies=[Depends(require_auth)])(_serve("monitor.js", "application/javascript"))
 app.get("/browse.js", dependencies=[Depends(require_auth)])(_serve("browse.js", "application/javascript"))
+app.get("/tags.js", dependencies=[Depends(require_auth)])(_serve("tags.js", "application/javascript"))

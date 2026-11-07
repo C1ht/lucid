@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from .. import paths
 from .quality import new_is_lower_quality, read_quality
 
-_AUDIO_EXTS = {".flac", ".mp3", ".m4a"}
+_AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".opus", ".ogg"}
 
 MoveAction = Literal["moved", "overwritten", "skipped_lower_quality"]
 

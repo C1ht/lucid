@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve, youtube
 from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut, JobStatus
+from .tagging import custom as custom_tags
 from .tagging import retag
 from .tagging import staging as tagging_staging
 
@@ -358,6 +359,14 @@ class JobManager:
                             f"[tagging] Couldn't apply Navidrome-friendly tags, files kept as "
                             f"streamrip wrote them: {exc}"
                         )
+
+            wanted_tags = getattr(req, "custom_tags", None)
+            if wanted_tags is not None and not wanted_tags.is_empty():
+                try:
+                    for note in custom_tags.apply_custom_tags(staging_dir, wanted_tags):
+                        await on_line(f"[custom tags] {note}")
+                except Exception as exc:  # noqa: BLE001 - keep the download, say what happened
+                    await on_line(f"[custom tags] Couldn't apply custom tags, files kept as downloaded: {exc}")
 
             music_dir = config_store.resolve_download_folder(settings)
             moves = tagging_staging.move_into_library(staging_dir, music_dir, job.id)

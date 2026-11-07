@@ -12,6 +12,7 @@ FAILED_DOWNLOADS_DB_PATH = STREAMRIP_DIR / "failed_downloads.db"
 APP_SETTINGS_PATH = CONFIG_DIR / "settings.json"
 JOBS_HISTORY_PATH = CONFIG_DIR / "jobs.json"
 MONITORS_PATH = CONFIG_DIR / "monitors.json"
+COVERS_DIR = CONFIG_DIR / "covers"
 
 RIP_BIN = os.environ.get("LUCID_RIP_BIN", "rip")
 

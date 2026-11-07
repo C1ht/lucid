@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SECRET_UNCHANGED = ""  # empty string from the client means "leave stored value as-is"
 
@@ -114,17 +114,46 @@ class SearchResult(BaseModel):
     desc: str
 
 
+def _clean(value: Optional[str]) -> Optional[str]:
+    value = (value or "").strip()
+    return value or None
+
+
+class CustomTags(BaseModel):
+    """Overrides applied on top of whatever tags a download comes with. Only
+    fields that are set are touched; anything left out keeps its tag."""
+
+    title: Optional[str] = Field(default=None, max_length=300)
+    artist: Optional[str] = Field(default=None, max_length=300)
+    album_artist: Optional[str] = Field(default=None, max_length=300)
+    album: Optional[str] = Field(default=None, max_length=300)
+    genre: Optional[str] = Field(default=None, max_length=100)
+    year: Optional[str] = Field(default=None, max_length=10)
+    track_number: Optional[int] = Field(default=None, ge=1, le=999)
+    cover_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+    @field_validator("title", "artist", "album_artist", "album", "genre", "year", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        return _clean(value) if isinstance(value, str) or value is None else value
+
+    def is_empty(self) -> bool:
+        return not any(v is not None for v in self.model_dump().values())
+
+
 class DownloadByIdRequest(BaseModel):
     source: Source
     media_type: MediaType
     id: str
     desc: Optional[str] = None
     navidrome_tagging: Optional[bool] = None
+    custom_tags: Optional[CustomTags] = None
 
 
 class DownloadByUrlRequest(BaseModel):
     url: str
     navidrome_tagging: Optional[bool] = None
+    custom_tags: Optional[CustomTags] = None
 
 
 JobKind = Literal["id", "url", "lastfm"]

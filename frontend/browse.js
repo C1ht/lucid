@@ -20,6 +20,8 @@
     back: svg('<path d="M15 6l-6 6 6 6"/>'),
     play: svg('<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>'),
     stop: svg('<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>'),
+    more: svg('<circle cx="5.5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor"/>'),
+    tag: svg('<path d="M4 4h8l8 8-8 8-8-8z"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/>'),
     note: svg('<path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="16" r="2.2"/>'),
   };
 
@@ -80,6 +82,26 @@
   const playButton = (id, label, cls = "icon-btn pv-btn") =>
     `<button type="button" class="${cls}" data-preview="${attr(id)}" title="Preview ${attr(label)}" aria-label="Preview ${attr(label)}">${ICON.play}</button>`;
 
+  /* What each track's "..." menu acts on, keyed by the button's data-more. */
+  const menuTargets = new Map();
+  const moreButton = (key, target, cls = "icon-btn more-btn") => {
+    menuTargets.set(key, target);
+    return `<button type="button" class="${cls}" data-more="${attr(key)}" title="More options" aria-label="More options">${ICON.more}</button>`;
+  };
+  const qobuzTarget = (t) => ({
+    source: "qobuz",
+    id: t.id,
+    label: labelTrack(t),
+    prefill: {
+      title: t.title,
+      artist: t.artist,
+      album: t.album,
+      year: (t.date || "").slice(0, 4),
+      track_number: t.track_number,
+      cover: t.cover_large || t.cover,
+    },
+  });
+
   const ytEnabled = () => !!window.youtubeEnabled;
 
   const labelAlbum = (a) => `${a.title} by ${a.artist}`;
@@ -138,6 +160,7 @@
           <div class="row-sub">${esc(sub)}</div>
         </div>
         <span class="row-time">${esc(fmtDuration(t.duration))}</span>
+        ${moreButton("q:" + t.id, qobuzTarget(t))}
         ${dlButton("track", t.id, labelTrack(t))}
       </div>`;
   }
@@ -151,6 +174,12 @@
           <div class="row-sub">${esc(v.channel)}</div>
         </div>
         <span class="row-time">${esc(fmtDuration(v.duration))}</span>
+        ${moreButton("yt:" + v.id, {
+          source: "youtube",
+          id: v.id,
+          label: v.channel ? `${v.channel} - ${v.title}` : v.title,
+          prefill: { title: v.title, artist: v.channel, cover: v.thumbnail },
+        })}
         ${dlButton("yt", v.id, v.channel ? `${v.channel} - ${v.title}` : v.title)}
       </div>`;
   }
@@ -273,6 +302,7 @@
           }</span>
           <span class="trow-artist-col">${esc(third)}</span>
           <span class="row-time">${esc(fmtDuration(t.duration))}</span>
+          ${moreButton("q:" + t.id, qobuzTarget(t))}
           ${dlButton("track", t.id, labelTrack(t))}
         </div>`;
       })
@@ -359,6 +389,7 @@
             <button type="button" class="btn btn-accent btn-icon" data-dl="track:${attr(d.id)}" data-label="${attr(labelTrack(d))}">${ICON.download}Download</button>
             ${playButton(d.id, labelTrack(d), "btn btn-outline btn-icon pv-btn pv-solid")}
             ${d.album_id ? `<button type="button" class="btn btn-outline" data-open="album:${attr(d.album_id)}">Open album</button>` : ""}
+            ${moreButton("q:" + d.id, qobuzTarget({ ...d, cover: d.cover_large || d.cover }), "btn btn-outline btn-icon more-btn more-solid")}
           </div>
         </div>
       </div>`;
@@ -455,6 +486,7 @@
 
   async function render() {
     stopPreview();
+    closeMenu();
     const view = state.current;
     qs("search-title").hidden = !!view && !["results", "link"].includes(view.type);
     renderChips();
@@ -538,7 +570,10 @@
     return `<div class="notice link-notice">
       <p>This link can't be browsed, but it can still be downloaded directly.</p>
       <p class="link-url">${esc(url)}</p>
-      <button type="button" class="btn btn-accent btn-icon" data-act="dl-link" data-url="${attr(url)}">${ICON.download}Download link</button>
+      <div class="link-actions">
+        <button type="button" class="btn btn-accent btn-icon" data-act="dl-link" data-url="${attr(url)}">${ICON.download}Download link</button>
+        ${moreButton("link:" + url, { source: "url", url, label: url, prefill: {} }, "btn btn-outline btn-icon more-btn more-solid")}
+      </div>
     </div>`;
   }
 
@@ -593,6 +628,56 @@
     state.filter = "all";
     renderResults();
   }
+
+  /* ---------- "..." menu ---------- */
+
+  const menu = { el: null, btn: null };
+
+  function closeMenu() {
+    if (menu.btn) menu.btn.classList.remove("open");
+    if (menu.el) menu.el.hidden = true;
+    menu.btn = null;
+  }
+
+  function openMenu(btn) {
+    if (menu.btn === btn) return closeMenu();
+    closeMenu();
+    const target = menuTargets.get(btn.dataset.more);
+    if (!target) return;
+    if (!menu.el) {
+      menu.el = document.createElement("div");
+      menu.el.className = "menu";
+      menu.el.setAttribute("role", "menu");
+      document.body.appendChild(menu.el);
+    }
+    // Extend this list for new per-track actions.
+    menu.el.innerHTML = `<button type="button" class="menu-item" role="menuitem" data-menu-act="tags">${ICON.tag}Custom tags…</button>`;
+    menu.el.onclick = (e) => {
+      const item = e.target.closest("[data-menu-act]");
+      if (!item) return;
+      closeMenu();
+      if (item.dataset.menuAct === "tags") window.openTagEditor(target);
+    };
+    menu.el.hidden = false;
+    menu.btn = btn;
+    btn.classList.add("open");
+    const r = btn.getBoundingClientRect();
+    const h = menu.el.offsetHeight;
+    const w = menu.el.offsetWidth;
+    const top = r.bottom + 6 + h > window.innerHeight ? r.top - h - 6 : r.bottom + 6;
+    menu.el.style.top = `${Math.max(8, top)}px`;
+    menu.el.style.left = `${Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8))}px`;
+    menu.el.querySelector(".menu-item").focus();
+  }
+
+  document.addEventListener("click", (e) => {
+    if (menu.btn && !e.target.closest(".menu") && !e.target.closest("[data-more]")) closeMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && menu.btn) closeMenu();
+  });
+  window.addEventListener("resize", closeMenu);
+  document.addEventListener("scroll", closeMenu, true);
 
   /* ---------- previews ---------- */
 
@@ -821,6 +906,12 @@
 
     const root = body();
     root.addEventListener("click", (e) => {
+      const more = e.target.closest("[data-more]");
+      if (more) {
+        e.stopPropagation();
+        openMenu(more);
+        return;
+      }
       const pv = e.target.closest("[data-preview]");
       if (pv) {
         e.stopPropagation();

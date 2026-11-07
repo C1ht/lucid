@@ -90,6 +90,8 @@ def album_card(a: dict) -> dict:
         "artist": artist.get("name") or "Unknown artist",
         "artist_id": _sid(artist.get("id")),
         "cover": _img(a.get("image"), "small", "large", "thumbnail"),
+        "cover_large": _img(a.get("image"), "large", "small"),
+        "genre": (a.get("genre") or {}).get("name"),
         "year": date[:4],
         "date": date,
         "tracks_count": a.get("tracks_count"),
@@ -273,6 +275,25 @@ class QobuzBrowser:
             }
 
         return await self._cached(f"search:{query.lower()}", build)
+
+    async def suggest(self, kind: str, query: str, artist: str = "") -> list[dict]:
+        """Autocomplete for the custom-tag fields. Names are exactly what Qobuz
+        calls them, which is what a normal Qobuz download would be tagged with."""
+        query, artist = query.strip(), artist.strip()
+        if kind == "artist":
+            found = (await self.search(query))["artists"]
+            return [{"name": a["name"], "image": a["image"]} for a in found[:6]]
+        found = (await self.search(f"{artist} {query}".strip()))["albums"]
+        if artist:
+            mine = [a for a in found if artist.lower() in (a["artist"] or "").lower()]
+            found = mine or found
+        return [
+            {
+                "title": a["title"], "artist": a["artist"], "year": a["year"],
+                "genre": a["genre"], "cover": a["cover"], "cover_large": a["cover_large"],
+            }
+            for a in found[:6]
+        ]
 
     async def preview(self, track_id: str) -> dict:
         """A short-lived streaming URL for in-browser previews. Qobuz has no
