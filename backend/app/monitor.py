@@ -12,11 +12,11 @@ schedule in your own timezone.
 import asyncio
 import json
 import re
-import sqlite3
 from datetime import date, datetime
 from typing import Any, Optional
 
 from . import paths
+from .library import downloaded_ids
 from .browse import BrowseError, browser
 from .jobs import manager
 
@@ -34,15 +34,6 @@ def _releases(artist: dict) -> list[dict]:
     albums = artist.get("albums") or []
     primary = [a for a in albums if a.get("primary")]
     return primary or albums
-
-
-def _downloaded_ids() -> set[str]:
-    """Track IDs streamrip has already downloaded (its own dedupe database)."""
-    try:
-        with sqlite3.connect(f"file:{paths.DOWNLOADS_DB_PATH}?mode=ro", uri=True) as conn:
-            return {str(row[0]) for row in conn.execute("SELECT id FROM downloads")}
-    except sqlite3.Error:
-        return set()
 
 
 def _is_released(album: dict) -> bool:
@@ -177,7 +168,7 @@ class Monitor:
         entry["last_error"] = None
         entry["name"] = artist["name"]
 
-        have = _downloaded_ids()
+        have = downloaded_ids()
         known = set(entry["known"])
         queued: list[str] = []
         for album in _releases(artist):

@@ -215,6 +215,8 @@ input:focus-visible, select:focus-visible { outline: none; }
 .btn-accent:hover { background: rgba(255, 255, 255, 0.85); }
 .btn-outline { background: var(--fill); color: var(--text); }
 .btn-outline:hover { background: var(--fill-hover); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: #ff6a60; }
 .btn-small { height: 28px; padding: 0 12px; border-radius: 8px; font-size: 13px; }
 .btn-icon { gap: 8px; }
 .btn-icon svg { width: 16px; height: 16px; }
@@ -238,6 +240,7 @@ input:focus-visible, select:focus-visible { outline: none; }
 .icon-btn svg { width: 17px; height: 17px; }
 .icon-btn:hover { background: var(--fill); color: var(--text); }
 .icon-btn.done { color: var(--success); }
+.icon-btn.danger:hover { color: var(--danger); }
 
 .link-btn { background: none; border: none; padding: 0; color: var(--accent); font-size: 14px; cursor: pointer; }
 .link-btn:hover { color: var(--accent-hover); }
@@ -558,6 +561,7 @@ input:focus-visible, select:focus-visible { outline: none; }
 .pill-success { color: var(--success); }
 .pill-failed { color: var(--danger); }
 .pill-canceled { color: var(--text-3); }
+.pill-removed { color: var(--text-3); }
 
 .job-progress-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .progress-track { flex: 1; height: 4px; overflow: hidden; border-radius: 999px; background: var(--fill-strong); }
@@ -625,6 +629,21 @@ input:focus-visible, select:focus-visible { outline: none; }
 .switch input:checked + .slider { background: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Dialog ---------- */
+
+.dialog {
+  width: min(440px, 90vw);
+  padding: 22px 24px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.dialog h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.dialog p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
 /* ---------- Monitor ---------- */
 

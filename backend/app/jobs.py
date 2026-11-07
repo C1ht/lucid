@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import config_store, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve
+from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve
 from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut, JobStatus
 from .tagging import retag
 from .tagging import staging as tagging_staging
@@ -33,6 +33,11 @@ class Job:
     bytes_downloaded: int = 0
     speed_mbps: float = 0.0
     percent: Optional[float] = None
+    # Files this job put in the library. None means not recorded (job predates
+    # this), so there's nothing safe to delete.
+    files: Optional[list[str]] = None
+    library_root: Optional[str] = None
+    track_ids: list[str] = field(default_factory=list)
 
     def to_out(self) -> JobOut:
         return JobOut(
@@ -48,7 +53,18 @@ class Job:
             bytes_downloaded=self.bytes_downloaded,
             speed_mbps=self.speed_mbps,
             percent=self.percent,
+            removable=self.status == "success" and self.files is not None and bool(self.library_root),
+            redownloadable=self.status in ("failed", "canceled", "removed") and bool(self.payload),
         )
+
+    def to_record(self) -> dict:
+        return {
+            **self.to_out().model_dump(),
+            "payload": self.payload,
+            "files": self.files,
+            "library_root": self.library_root,
+            "track_ids": self.track_ids,
+        }
 
 
 class JobManager:
@@ -70,7 +86,7 @@ class JobManager:
                 id=item["id"],
                 kind=item["kind"],
                 label=item["label"],
-                payload={},
+                payload=item.get("payload") or {},
                 status=item["status"],
                 created_at=item["created_at"],
                 started_at=item.get("started_at"),
@@ -80,6 +96,9 @@ class JobManager:
                 bytes_downloaded=item.get("bytes_downloaded", 0),
                 speed_mbps=item.get("speed_mbps", 0.0),
                 percent=item.get("percent"),
+                files=item.get("files"),
+                library_root=item.get("library_root"),
+                track_ids=item.get("track_ids", []),
             )
             if job.status in ("queued", "running"):
                 job.status = "canceled"
@@ -88,7 +107,7 @@ class JobManager:
             self.jobs[job.id] = job
 
     def _persist(self) -> None:
-        items = [j.to_out().model_dump() for j in list(self.jobs.values())[-MAX_HISTORY:]]
+        items = [j.to_record() for j in list(self.jobs.values())[-MAX_HISTORY:]]
         paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         paths.JOBS_HISTORY_PATH.write_text(json.dumps(items, indent=2), encoding="utf-8")
 
@@ -110,6 +129,46 @@ class JobManager:
         self._persist()
         self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
         return job.to_out()
+
+    def files_status(self, job_id: str) -> dict:
+        job = self._removable(job_id)
+        return library.file_status(job.files or [], job.library_root or "")
+
+    def _removable(self, job_id: str) -> "Job":
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError("Job not found")
+        if not job.to_out().removable:
+            raise ValueError("This download can't be deleted from here")
+        return job
+
+    async def delete_job_files(self, job_id: str) -> dict:
+        """Delete what a finished job put in the library and let streamrip
+        download it again. Files that are already gone are simply skipped."""
+        job = self._removable(job_id)
+        status = library.file_status(job.files or [], job.library_root or "")
+        deleted = library.delete_files(job.files or [], job.library_root or "")
+        library.forget_ids(job.track_ids)
+        job.status = "removed"
+        job.files, job.track_ids = [], []
+        note = f"[delete] Removed {deleted} file(s)" + (f", {status['missing']} were already gone." if status["missing"] else ".")
+        job.log.append(note)
+        self._persist()
+        self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
+        if deleted:
+            await navidrome.trigger_scan(config_store.load_settings().navidrome)
+        return {"deleted": deleted, "missing": status["missing"]}
+
+    def requeue(self, job_id: str) -> JobOut:
+        """Queue a failed, canceled or deleted job again, replacing its row."""
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError("Job not found")
+        if not job.to_out().redownloadable:
+            raise ValueError("This download can't be queued again")
+        del self.jobs[job_id]
+        self._broadcast({"type": "job_removed", "job_id": job_id})
+        return self.enqueue(job.kind, job.label, job.payload)
 
     def _broadcast(self, event: dict) -> None:
         for sub in list(self.subscribers):
@@ -213,6 +272,7 @@ class JobManager:
                     }
                 )
 
+            ids_before = library.downloaded_ids()
             tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
             tracker.start()
             try:
@@ -223,7 +283,12 @@ class JobManager:
             finally:
                 await tracker.stop()
 
+            job.track_ids = sorted(library.downloaded_ids() - ids_before)
             if returncode != 0:
+                # Staging is thrown away on failure, so tracks streamrip already
+                # marked as downloaded would be skipped (and lost) on a retry.
+                library.forget_ids(job.track_ids)
+                job.track_ids = []
                 return returncode
 
             if do_retag:
@@ -246,6 +311,8 @@ class JobManager:
 
             music_dir = config_store.resolve_download_folder(settings)
             moves = tagging_staging.move_into_library(staging_dir, music_dir, job.id)
+            job.files = [m.dest for m in moves if m.action in ("moved", "overwritten")]
+            job.library_root = str(music_dir)
             moved_count = sum(1 for m in moves if m.action == "moved")
             overwritten = [m for m in moves if m.action == "overwritten"]
             skipped_lower = [m for m in moves if m.action == "skipped_lower_quality"]

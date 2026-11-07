@@ -124,7 +124,7 @@ class DownloadByUrlRequest(BaseModel):
 
 
 JobKind = Literal["id", "url", "lastfm"]
-JobStatus = Literal["queued", "running", "success", "failed", "canceled"]
+JobStatus = Literal["queued", "running", "success", "failed", "canceled", "removed"]
 
 
 class JobOut(BaseModel):
@@ -142,3 +142,6 @@ class JobOut(BaseModel):
     # Approximate -- see progress.py. None when we have no size estimate to
     # compare against (e.g. non-Qobuz sources), not "0% done".
     percent: Optional[float] = None
+    # Whether the UI may offer "delete files" / "download again" for this job.
+    removable: bool = False
+    redownloadable: bool = False

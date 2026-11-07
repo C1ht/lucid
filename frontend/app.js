@@ -111,6 +111,8 @@ function renderJobs() {
         <span class="pill pill-${job.status}">${job.status}</span>
         <span class="job-label" title="${escapeHtml(job.label)}">${escapeHtml(job.label)}</span>
         <span class="job-time">${formatTime(job.created_at)}</span>
+        ${job.redownloadable ? `<button type="button" class="btn btn-outline btn-small" data-again="${job.id}">${job.status === "removed" ? "Download again" : "Retry"}</button>` : ""}
+        ${job.removable ? `<button type="button" class="icon-btn danger" data-delete="${job.id}" title="Delete files">${TRASH_ICON}</button>` : ""}
         <button class="job-toggle">${expanded.has(id) ? "hide log" : "show log"}</button>
       </div>
       ${progressHtml}
@@ -121,12 +123,69 @@ function renderJobs() {
       else expanded.add(id);
       renderJobs();
     });
+    row.querySelector("[data-delete]")?.addEventListener("click", () => confirmDelete(job));
+    row.querySelector("[data-again]")?.addEventListener("click", (e) => downloadAgain(job, e.currentTarget));
     list.appendChild(row);
   }
   const active = [...jobs.values()].filter((j) => j.status === "queued" || j.status === "running").length;
   const badge = qs("queue-count");
   badge.hidden = active === 0;
   badge.textContent = String(active);
+}
+
+const TRASH_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12M9 7V4h6v3"/></svg>';
+
+/* Asks before deleting. Resolves true if the user confirms. */
+function askConfirm({ title, message, confirmLabel }) {
+  return new Promise((resolve) => {
+    const dlg = qs("confirm-dialog");
+    qs("confirm-title").textContent = title;
+    qs("confirm-message").textContent = message;
+    qs("confirm-ok").textContent = confirmLabel;
+    const done = (value) => {
+      dlg.close();
+      qs("confirm-ok").onclick = qs("confirm-cancel").onclick = null;
+      dlg.onclose = null;
+      resolve(value);
+    };
+    qs("confirm-ok").onclick = () => done(true);
+    qs("confirm-cancel").onclick = () => done(false);
+    dlg.onclose = () => done(false);
+    dlg.showModal();
+  });
+}
+
+async function confirmDelete(job) {
+  let status;
+  try {
+    status = await api(`/api/jobs/${job.id}/files`);
+  } catch (err) {
+    showToast(err.message, "bad");
+    return;
+  }
+  const n = status.existing;
+  const gone = status.missing ? ` ${status.missing} ${status.missing === 1 ? "file is" : "files are"} already gone.` : "";
+  const message = n
+    ? `This deletes ${n} ${n === 1 ? "file" : "files"} from your library.${gone} You can download it again afterwards.`
+    : "The files for this download are already gone from your library, so nothing will be deleted. You can still download it again afterwards.";
+  if (!(await askConfirm({ title: `Delete ${job.label}?`, message, confirmLabel: "Delete" }))) return;
+  try {
+    const res = await api(`/api/jobs/${job.id}/delete`, { method: "POST" });
+    showToast(res.deleted ? `Deleted ${res.deleted} ${res.deleted === 1 ? "file" : "files"}` : "Nothing to delete. Ready to download again.", "ok");
+  } catch (err) {
+    showToast(err.message, "bad");
+  }
+}
+
+async function downloadAgain(job, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/jobs/${job.id}/redownload`, { method: "POST" });
+  } catch (err) {
+    btn.disabled = false;
+    showToast(err.message, "bad");
+  }
 }
 
 function formatTime(iso) {
@@ -151,6 +210,11 @@ function connectWebSocket() {
         jobs.set(job.id, job);
         jobOrder.push(job.id);
       }
+      renderJobs();
+    } else if (msg.type === "job_removed") {
+      jobs.delete(msg.job_id);
+      const i = jobOrder.indexOf(msg.job_id);
+      if (i >= 0) jobOrder.splice(i, 1);
       renderJobs();
     } else if (msg.type === "job_update") {
       upsertJob(msg.job);

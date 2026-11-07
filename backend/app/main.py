@@ -172,6 +172,35 @@ async def check_monitor_now() -> dict:
     return monitor.state()
 
 
+@app.get("/api/jobs/{job_id}/files", dependencies=[Depends(require_auth)])
+async def job_files(job_id: str) -> dict:
+    return _job_call(manager.files_status, job_id)
+
+
+@app.post("/api/jobs/{job_id}/delete", dependencies=[Depends(require_auth)])
+async def delete_job(job_id: str) -> dict:
+    try:
+        return await manager.delete_job_files(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/redownload", dependencies=[Depends(require_auth)])
+async def redownload_job(job_id: str) -> dict:
+    return _job_call(lambda j: manager.requeue(j).model_dump(), job_id)
+
+
+def _job_call(call, job_id: str) -> dict:
+    try:
+        return call(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.websocket("/api/ws")
 async def ws_events(websocket: WebSocket) -> None:
     if not check_header(websocket.headers.get("authorization")):
