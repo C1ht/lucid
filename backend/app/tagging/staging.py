@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from .. import paths
 from .quality import new_is_lower_quality, read_quality
 
-_AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".opus", ".ogg"}
+AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".opus", ".ogg"}
 
 MoveAction = Literal["moved", "overwritten", "skipped_lower_quality"]
 
@@ -43,7 +43,7 @@ def cleanup_staging_dir(job_id: str) -> None:
 
 
 def iter_audio_files(staging_dir: Path) -> list[Path]:
-    return sorted(p for p in staging_dir.rglob("*") if p.is_file() and p.suffix.lower() in _AUDIO_EXTS)
+    return sorted(p for p in staging_dir.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS)
 
 
 def _atomic_move(src: Path, dest: Path) -> None:
@@ -84,7 +84,7 @@ def move_into_library(staging_dir: Path, music_dir: Path, job_id: str) -> list[M
             continue
 
         detail = ""
-        if src.suffix.lower() in _AUDIO_EXTS:
+        if src.suffix.lower() in AUDIO_EXTS:
             existing_q = read_quality(str(dest))
             new_q = read_quality(str(src))
 

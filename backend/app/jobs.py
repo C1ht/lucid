@@ -1,8 +1,10 @@
 import asyncio
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve, youtube
@@ -10,9 +12,12 @@ from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut,
 from .tagging import custom as custom_tags
 from .tagging import retag
 from .tagging import staging as tagging_staging
+from .tagging.staging import iter_audio_files
 
 MAX_LOG_LINES = 2000
 MAX_HISTORY = 300
+# streamrip logs "Skipping track 123. Marked as downloaded in the database."
+_SKIPPED_RE = re.compile(r"Skipping track (\d+)")
 CANCELED_BY_USER = "Canceled"
 INTERRUPTED = "Interrupted by restart"
 
@@ -137,6 +142,19 @@ class JobManager:
         self._persist()
         self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
         return job.to_out()
+
+    def _ids_with_intact_files(self, ids: set[str]) -> set[str]:
+        """Of these track ids, the ones a past job downloaded whose audio files
+        are all still in the library. Nothing is known about ids from jobs that
+        predate file tracking, so those count as not present."""
+        present: set[str] = set()
+        for job in self.jobs.values():
+            if job.status != "success" or job.files is None or not job.library_root or not job.track_ids:
+                continue
+            audio = [f for f in job.files if Path(f).suffix.lower() in tagging_staging.AUDIO_EXTS]
+            if audio and library.file_status(audio, job.library_root)["missing"] == 0:
+                present.update(job.track_ids)
+        return ids & present
 
     def files_status(self, job_id: str) -> dict:
         job = self._removable(job_id)
@@ -313,28 +331,55 @@ class JobManager:
                     }
                 )
 
-            ids_before = library.downloaded_ids()
-            tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
-            tracker.start()
-            try:
+            async def run_once() -> tuple[int, set[str]]:
+                skipped: set[str] = set()
+
+                async def watch(line: str) -> None:
+                    m = _SKIPPED_RE.search(line)
+                    if m:
+                        skipped.add(m.group(1))
+                    await on_line(line)
+
+                tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
+                tracker.start()
                 try:
                     if yt_url:
-                        returncode = await youtube.download(yt_url, staging_dir, on_line)
-                    elif job.kind == "id":
-                        returncode = await streamrip_cli.download_by_id(req, on_line, folder_override=str(staging_dir))
-                    else:
-                        returncode = await streamrip_cli.download_by_url(req, on_line, folder_override=str(staging_dir))
+                        return await youtube.download(yt_url, staging_dir, watch), skipped
+                    if job.kind == "id":
+                        return await streamrip_cli.download_by_id(req, watch, folder_override=str(staging_dir)), skipped
+                    return await streamrip_cli.download_by_url(req, watch, folder_override=str(staging_dir)), skipped
                 finally:
                     await tracker.stop()
+
+            ids_before = library.downloaded_ids()
+            carried: set[str] = set()  # ids from an earlier pass of this same job
+            try:
+                returncode, skipped = await run_once()
+                if returncode == 0 and skipped:
+                    # streamrip skips anything its database says it already has. If the
+                    # files were deleted outside Lucid (or before Lucid tracked them),
+                    # that would silently download nothing, so redo those tracks.
+                    stale = sorted(skipped - self._ids_with_intact_files(skipped))
+                    if stale:
+                        carried = library.downloaded_ids() - ids_before
+                        library.forget_ids(stale)
+                        ids_before = library.downloaded_ids()
+                        await on_line(
+                            f"[redo] {len(stale)} track(s) were marked as downloaded but aren't in your "
+                            "library any more. Downloading them again."
+                        )
+                        returncode, skipped = await run_once()
+                    elif not iter_audio_files(staging_dir):
+                        await on_line(f"[skip] {len(skipped)} track(s) are already in your library, nothing new to add.")
             except asyncio.CancelledError:
                 # Tracks streamrip already logged as done were never kept, so
                 # they must not be skipped when this is queued again.
-                library.forget_ids(sorted(library.downloaded_ids() - ids_before))
+                library.forget_ids(sorted((library.downloaded_ids() - ids_before) | carried))
                 raise
 
             job.past_download = True
             self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
-            job.track_ids = sorted(library.downloaded_ids() - ids_before)
+            job.track_ids = sorted((library.downloaded_ids() - ids_before) | carried)
             if returncode != 0:
                 # Staging is thrown away on failure, so tracks streamrip already
                 # marked as downloaded would be skipped (and lost) on a retry.
