@@ -12,6 +12,8 @@ from .tagging import staging as tagging_staging
 
 MAX_LOG_LINES = 2000
 MAX_HISTORY = 300
+CANCELED_BY_USER = "Canceled"
+INTERRUPTED = "Interrupted by restart"
 
 
 def _now() -> str:
@@ -38,6 +40,10 @@ class Job:
     files: Optional[list[str]] = None
     library_root: Optional[str] = None
     track_ids: list[str] = field(default_factory=list)
+    # Runtime only. Once the download itself is done the job is moving files
+    # into the library, which must not be cut off halfway.
+    task: Optional[asyncio.Task] = field(default=None, repr=False)
+    past_download: bool = False
 
     def to_out(self) -> JobOut:
         return JobOut(
@@ -55,6 +61,7 @@ class Job:
             percent=self.percent,
             removable=self.status == "success" and self.files is not None and bool(self.library_root),
             redownloadable=self.status in ("failed", "canceled", "removed") and bool(self.payload),
+            cancelable=self.status == "queued" or (self.status == "running" and not self.past_download),
         )
 
     def to_record(self) -> dict:
@@ -102,7 +109,7 @@ class JobManager:
             )
             if job.status in ("queued", "running"):
                 job.status = "canceled"
-                job.error = "Interrupted by restart"
+                job.error = INTERRUPTED
                 job.finished_at = job.finished_at or _now()
             self.jobs[job.id] = job
 
@@ -170,6 +177,25 @@ class JobManager:
         self._broadcast({"type": "job_removed", "job_id": job_id})
         return self.enqueue(job.kind, job.label, job.payload)
 
+    def cancel(self, job_id: str) -> JobOut:
+        """Stop a queued job before it starts, or a running one mid-download.
+        Whatever a running job fetched so far is thrown away (it only ever
+        lived in its staging folder) and the worker moves on to the next job."""
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError("Job not found")
+        if not job.to_out().cancelable:
+            raise ValueError("This download is already finishing or finished")
+        if job.status == "queued":
+            job.status = "canceled"
+            job.error = CANCELED_BY_USER
+            job.finished_at = _now()
+            self._persist()
+            self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
+        elif job.task is not None:
+            job.task.cancel()
+        return job.to_out()
+
     def _broadcast(self, event: dict) -> None:
         for sub in list(self.subscribers):
             sub.put_nowait(event)
@@ -186,9 +212,10 @@ class JobManager:
         while True:
             job_id = await self.queue.get()
             job = self.jobs.get(job_id)
-            if job is None:
+            if job is None or job.status != "queued":  # removed or canceled while waiting
                 continue
-            await self._run_job(job)
+            job.task = asyncio.create_task(self._run_job(job))
+            await job.task
 
     async def _run_job(self, job: Job) -> None:
         job.status = "running"
@@ -208,9 +235,15 @@ class JobManager:
                 job.error = f"Download failed (exit code {returncode}), see the log"
                 if any("Sign in to confirm" in line for line in job.log[-20:]):
                     job.error = "YouTube wants a signed-in session. Add cookies under Settings > YouTube."
+        except asyncio.CancelledError:
+            # Only this job's own task is cancelled; the worker carries on.
+            job.status = "canceled"
+            job.error = CANCELED_BY_USER
+            job.log.append("[cancel] Stopped. Partial downloads were discarded.")
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             job.status = "failed"
             job.error = str(exc)
+        job.task = None
 
         job.finished_at = _now()
         self._persist()
@@ -283,15 +316,23 @@ class JobManager:
             tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
             tracker.start()
             try:
-                if yt_url:
-                    returncode = await youtube.download(yt_url, staging_dir, on_line)
-                elif job.kind == "id":
-                    returncode = await streamrip_cli.download_by_id(req, on_line, folder_override=str(staging_dir))
-                else:
-                    returncode = await streamrip_cli.download_by_url(req, on_line, folder_override=str(staging_dir))
-            finally:
-                await tracker.stop()
+                try:
+                    if yt_url:
+                        returncode = await youtube.download(yt_url, staging_dir, on_line)
+                    elif job.kind == "id":
+                        returncode = await streamrip_cli.download_by_id(req, on_line, folder_override=str(staging_dir))
+                    else:
+                        returncode = await streamrip_cli.download_by_url(req, on_line, folder_override=str(staging_dir))
+                finally:
+                    await tracker.stop()
+            except asyncio.CancelledError:
+                # Tracks streamrip already logged as done were never kept, so
+                # they must not be skipped when this is queued again.
+                library.forget_ids(sorted(library.downloaded_ids() - ids_before))
+                raise
 
+            job.past_download = True
+            self._broadcast({"type": "job_update", "job": job.to_out().model_dump()})
             job.track_ids = sorted(library.downloaded_ids() - ids_before)
             if returncode != 0:
                 # Staging is thrown away on failure, so tracks streamrip already

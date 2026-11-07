@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import signal
 import tempfile
 from collections.abc import Awaitable, Callable
 from typing import Optional
@@ -35,8 +36,15 @@ async def run_streaming(args: list[str], on_line: Optional[LineCallback]) -> int
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(paths.MUSIC_DIR),
+        start_new_session=True,  # own process group, so cancel can stop helpers like ffmpeg too
     )
     assert proc.stdout is not None
+
+    def kill_group() -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
 
     async def pump() -> int:
         while True:
@@ -51,11 +59,15 @@ async def run_streaming(args: list[str], on_line: Optional[LineCallback]) -> int
     try:
         return await asyncio.wait_for(pump(), timeout=JOB_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        proc.kill()
+        kill_group()
         await proc.wait()
         if on_line is not None:
             await on_line(f"Timed out after {JOB_TIMEOUT_SECONDS}s, killed")
         raise RuntimeError(f"rip timed out after {JOB_TIMEOUT_SECONDS}s")
+    except asyncio.CancelledError:
+        kill_group()
+        await proc.wait()
+        raise
 
 
 async def download_by_id(

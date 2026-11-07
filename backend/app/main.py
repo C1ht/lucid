@@ -110,6 +110,11 @@ async def browse_artist(artist_id: str) -> dict:
     return await _browse(browser.artist)(artist_id)
 
 
+@app.get("/api/browse/preview/{track_id}", dependencies=[Depends(require_auth)])
+async def browse_preview(track_id: str) -> dict:
+    return await _browse(browser.preview)(track_id)
+
+
 @app.get("/api/browse/track/{track_id}", dependencies=[Depends(require_auth)])
 async def browse_track(track_id: str) -> dict:
     return await _browse(browser.track)(track_id)
@@ -210,6 +215,11 @@ async def delete_job(job_id: str) -> dict:
 @app.post("/api/jobs/{job_id}/redownload", dependencies=[Depends(require_auth)])
 async def redownload_job(job_id: str) -> dict:
     return _job_call(lambda j: manager.requeue(j).model_dump(), job_id)
+
+
+@app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_auth)])
+async def cancel_job(job_id: str) -> dict:
+    return _job_call(lambda j: manager.cancel(j).model_dump(), job_id)
 
 
 def _job_call(call, job_id: str) -> dict:

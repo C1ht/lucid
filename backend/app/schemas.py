@@ -149,3 +149,5 @@ class JobOut(BaseModel):
     # Whether the UI may offer "delete files" / "download again" for this job.
     removable: bool = False
     redownloadable: bool = False
+    # Queued, or still downloading (not yet moving files into the library).
+    cancelable: bool = False

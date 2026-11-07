@@ -18,6 +18,8 @@
     download: svg('<path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/>'),
     check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
     back: svg('<path d="M15 6l-6 6 6 6"/>'),
+    play: svg('<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>'),
+    stop: svg('<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>'),
     note: svg('<path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="16" r="2.2"/>'),
   };
 
@@ -75,6 +77,9 @@
   const dlButton = (kind, id, label, cls = "icon-btn dl-btn") =>
     `<button type="button" class="${cls}" data-dl="${attr(kind + ":" + id)}" data-label="${attr(label)}" title="Download">${ICON.download}</button>`;
 
+  const playButton = (id, label, cls = "icon-btn pv-btn") =>
+    `<button type="button" class="${cls}" data-preview="${attr(id)}" title="Preview ${attr(label)}" aria-label="Preview ${attr(label)}">${ICON.play}</button>`;
+
   const ytEnabled = () => !!window.youtubeEnabled;
 
   const labelAlbum = (a) => `${a.title} by ${a.artist}`;
@@ -129,7 +134,7 @@
       <div class="row" data-open="track:${attr(t.id)}" role="link" tabindex="0">
         ${cover(t.cover, "thumb")}
         <div class="row-main">
-          <div class="row-title">${esc(t.title)}${explicitBadge(t.explicit)}</div>
+          <div class="row-line"><span class="row-title">${esc(t.title)}${explicitBadge(t.explicit)}</span>${playButton(t.id, labelTrack(t))}</div>
           <div class="row-sub">${esc(sub)}</div>
         </div>
         <span class="row-time">${esc(fmtDuration(t.duration))}</span>
@@ -263,7 +268,7 @@
         return `${head}
         <div class="trow" data-open="track:${attr(t.id)}" role="link" tabindex="0">
           <span class="trow-num">${esc(num)}</span>
-          <span class="trow-main"><span class="trow-title">${esc(t.title)}${explicitBadge(t.explicit)}</span>${
+          <span class="trow-main"><span class="trow-line"><span class="trow-title">${esc(t.title)}${explicitBadge(t.explicit)}</span>${playButton(t.id, labelTrack(t))}</span>${
             showAlbum ? `<span class="trow-sub">${esc(t.artist)}</span>` : ""
           }</span>
           <span class="trow-artist-col">${esc(third)}</span>
@@ -352,6 +357,7 @@
           <div class="kv-grid">${rows}</div>
           <div class="detail-actions">
             <button type="button" class="btn btn-accent btn-icon" data-dl="track:${attr(d.id)}" data-label="${attr(labelTrack(d))}">${ICON.download}Download</button>
+            ${playButton(d.id, labelTrack(d), "btn btn-outline btn-icon pv-btn pv-solid")}
             ${d.album_id ? `<button type="button" class="btn btn-outline" data-open="album:${attr(d.album_id)}">Open album</button>` : ""}
           </div>
         </div>
@@ -448,6 +454,7 @@
   }
 
   async function render() {
+    stopPreview();
     const view = state.current;
     qs("search-title").hidden = !!view && !["results", "link"].includes(view.type);
     renderChips();
@@ -586,6 +593,49 @@
     state.filter = "all";
     renderResults();
   }
+
+  /* ---------- previews ---------- */
+
+  const PREVIEW_SECONDS = 30;
+  const preview = { audio: new Audio(), btn: null };
+
+  function stopPreview() {
+    const { audio, btn } = preview;
+    audio.pause();
+    audio.removeAttribute("src");
+    preview.btn = null;
+    if (btn) {
+      btn.classList.remove("playing", "loading");
+      btn.innerHTML = ICON.play;
+    }
+  }
+
+  async function togglePreview(btn) {
+    if (preview.btn === btn) return stopPreview();
+    stopPreview();
+    preview.btn = btn;
+    btn.classList.add("playing", "loading");
+    btn.innerHTML = '<span class="spinner spinner-sm"></span>';
+    try {
+      const { url } = await api(`/api/browse/preview/${encodeURIComponent(btn.dataset.preview)}`);
+      if (preview.btn !== btn) return;
+      preview.audio.src = url;
+      await preview.audio.play();
+      if (preview.btn !== btn) return;
+      btn.classList.remove("loading");
+      btn.innerHTML = ICON.stop;
+    } catch (err) {
+      if (preview.btn === btn) {
+        stopPreview();
+        showToast(`Preview failed: ${err.message}`, "bad");
+      }
+    }
+  }
+
+  preview.audio.addEventListener("ended", stopPreview);
+  preview.audio.addEventListener("timeupdate", () => {
+    if (preview.audio.currentTime >= PREVIEW_SECONDS) stopPreview();
+  });
 
   /* ---------- downloads ---------- */
 
@@ -771,6 +821,12 @@
 
     const root = body();
     root.addEventListener("click", (e) => {
+      const pv = e.target.closest("[data-preview]");
+      if (pv) {
+        e.stopPropagation();
+        togglePreview(pv);
+        return;
+      }
       const dl = e.target.closest("[data-dl]");
       if (dl) {
         e.stopPropagation();

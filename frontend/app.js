@@ -112,6 +112,7 @@ function renderJobs() {
         <span class="job-label" title="${escapeHtml(job.label)}">${escapeHtml(job.label)}</span>
         <span class="job-time">${formatTime(job.created_at)}</span>
         ${job.redownloadable ? `<button type="button" class="btn btn-outline btn-small" data-again="${job.id}">${job.status === "removed" ? "Download again" : "Retry"}</button>` : ""}
+        ${job.cancelable ? `<button type="button" class="icon-btn danger" data-cancel="${job.id}" title="${job.status === "queued" ? "Remove from queue" : "Stop download"}">${CANCEL_ICON}</button>` : ""}
         ${job.removable ? `<button type="button" class="icon-btn danger" data-delete="${job.id}" title="Delete files">${TRASH_ICON}</button>` : ""}
         <button class="job-toggle">${expanded.has(id) ? "hide log" : "show log"}</button>
       </div>
@@ -124,6 +125,7 @@ function renderJobs() {
       renderJobs();
     });
     row.querySelector("[data-delete]")?.addEventListener("click", () => confirmDelete(job));
+    row.querySelector("[data-cancel]")?.addEventListener("click", () => cancelJob(job));
     row.querySelector("[data-again]")?.addEventListener("click", (e) => downloadAgain(job, e.currentTarget));
     list.appendChild(row);
   }
@@ -135,6 +137,9 @@ function renderJobs() {
 
 const TRASH_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12M9 7V4h6v3"/></svg>';
+
+const CANCEL_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 /* Asks before deleting. Resolves true if the user confirms. */
 function askConfirm({ title, message, confirmLabel }) {
@@ -173,6 +178,23 @@ async function confirmDelete(job) {
   try {
     const res = await api(`/api/jobs/${job.id}/delete`, { method: "POST" });
     showToast(res.deleted ? `Deleted ${res.deleted} ${res.deleted === 1 ? "file" : "files"}` : "Nothing to delete. Ready to download again.", "ok");
+  } catch (err) {
+    showToast(err.message, "bad");
+  }
+}
+
+async function cancelJob(job) {
+  // A queued job hasn't touched anything yet, so it goes straight away (Retry undoes it).
+  if (job.status === "running") {
+    const ok = await askConfirm({
+      title: `Stop ${job.label}?`,
+      message: "What it has downloaded so far is discarded and the next item in the queue starts. You can queue it again afterwards.",
+      confirmLabel: "Stop download",
+    });
+    if (!ok) return;
+  }
+  try {
+    await api(`/api/jobs/${job.id}/cancel`, { method: "POST" });
   } catch (err) {
     showToast(err.message, "bad");
   }

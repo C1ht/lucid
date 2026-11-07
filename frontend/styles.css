@@ -444,6 +444,19 @@ input:focus-visible, select:focus-visible { outline: none; }
 .dl-btn.done { color: var(--success); }
 @media (hover: none) { .dl-btn { opacity: 1; } }
 
+.row-line, .trow-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.row-line .row-title, .trow-line .trow-title { min-width: 0; }
+.pv-btn { width: 24px; height: 24px; border-radius: 50%; color: var(--text-2); opacity: 0; }
+.pv-btn svg { width: 12px; height: 12px; }
+.row:hover .pv-btn, .trow:hover .pv-btn, .pv-btn:focus-visible, .pv-btn.playing { opacity: 1; }
+.pv-btn.playing { color: var(--accent); }
+.pv-btn.pv-solid { width: auto; height: auto; border-radius: 8px; opacity: 1; color: var(--text); }
+.pv-btn.pv-solid svg { width: 16px; height: 16px; }
+.pv-btn.pv-solid::after { content: "Preview"; margin-left: 6px; }
+.pv-btn.pv-solid.playing::after { content: "Stop"; }
+.spinner-sm { width: 12px; height: 12px; border-width: 1.5px; }
+@media (hover: none) { .pv-btn { opacity: 1; } }
+
 /* ---------- Detail pages ---------- */
 
 .back-btn {

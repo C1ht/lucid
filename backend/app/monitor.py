@@ -18,7 +18,7 @@ from typing import Any, Optional
 from . import paths
 from .library import downloaded_ids
 from .browse import BrowseError, browser
-from .jobs import manager
+from .jobs import INTERRUPTED, manager
 
 TICK_SECONDS = 30
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -151,7 +151,8 @@ class Monitor:
         """Let releases whose download failed (or was interrupted) be tried again."""
         for album_id, job_id in list(entry["jobs"].items()):
             job = manager.jobs.get(job_id)
-            if job and job.status in ("failed", "canceled"):
+            # A download the user cancelled themselves stays cancelled.
+            if job and (job.status == "failed" or (job.status == "canceled" and job.error == INTERRUPTED)):
                 del entry["jobs"][album_id]
                 if album_id in entry["known"]:
                     entry["known"].remove(album_id)

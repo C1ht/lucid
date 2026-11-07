@@ -10,6 +10,7 @@ navigating back and forth is instant.
 """
 
 import asyncio
+import hashlib
 import html
 import re
 import time
@@ -272,6 +273,31 @@ class QobuzBrowser:
             }
 
         return await self._cached(f"search:{query.lower()}", build)
+
+    async def preview(self, track_id: str) -> dict:
+        """A short-lived streaming URL for in-browser previews. Qobuz has no
+        sample intent, so this is a normal 320 kbps MP3 stream (the same thing
+        the Qobuz player fetches) and the page stops it after a few seconds.
+        Never cached: the URL expires."""
+
+        async def call(client: QobuzClient) -> dict:
+            fmt, ts = 5, time.time()
+            sig = f"trackgetFileUrlformat_id{fmt}intentstreamtrack_id{track_id}{ts}{client.secret}"
+            status, resp = await client._api_request(
+                "track/getFileUrl",
+                {
+                    "request_ts": ts,
+                    "request_sig": hashlib.md5(sig.encode("utf-8")).hexdigest(),
+                    "track_id": track_id,
+                    "format_id": fmt,
+                    "intent": "stream",
+                },
+            )
+            if status != 200 or not resp.get("url"):
+                raise BrowseError(resp.get("message") or "No preview available for this track", 404)
+            return {"url": resp["url"], "duration": resp.get("duration")}
+
+        return await self._with_client(call)
 
     async def album(self, album_id: str) -> dict:
         async def build() -> dict:
