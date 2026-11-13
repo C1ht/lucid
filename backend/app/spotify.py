@@ -326,6 +326,24 @@ async def _artist_card(qobuz_id: str, name: str) -> dict:
     return {"id": qobuz_id, "name": name, "image": None, "albums_count": None}
 
 
+def available() -> bool:
+    s = config_store.load_settings().spotify
+    return bool(s.enabled and s.client_id.strip() and s.client_secret.strip())
+
+
+async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
+    """The Spotify artist that is this Qobuz artist: same name, and the
+    discography that overlaps most with the Qobuz releases (same-name artists exist)."""
+    sp = await client.search(name)
+    best, best_score = None, 0
+    for cand in [a for a in sp["artists"] if sim(a["name"], name) >= 0.9][:3]:
+        titles = [d["title"] for d in await client.discography(cand["id"])]
+        score = sum(1 for a in qobuz_albums if any(sim(a["title"], t) >= MATCH_THRESHOLD for t in titles))
+        if score > best_score:
+            best, best_score = cand["id"], score
+    return best
+
+
 # ---------- filtering a Qobuz artist page ----------
 
 

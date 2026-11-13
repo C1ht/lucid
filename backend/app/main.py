@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -232,6 +233,11 @@ async def get_job(job_id: str) -> dict:
 
 class MonitorArtistRequest(BaseModel):
     id: str
+    spotify: Optional[bool] = None  # None: on whenever Spotify search is enabled
+
+
+class MonitorSpotifyRequest(BaseModel):
+    spotify: bool
 
 
 class MonitorScheduleRequest(BaseModel):
@@ -255,9 +261,14 @@ async def put_monitor_schedule(req: MonitorScheduleRequest) -> dict:
 @app.post("/api/monitor/artists", dependencies=[Depends(require_auth)])
 async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
     try:
-        return await monitor.add_artist(req.id)
+        return await monitor.add_artist(req.id, req.spotify)
     except BrowseError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.put("/api/monitor/artists/{artist_id}", dependencies=[Depends(require_auth)])
+async def update_monitored_artist(artist_id: str, req: MonitorSpotifyRequest) -> dict:
+    return monitor.set_spotify(artist_id, req.spotify)
 
 
 @app.delete("/api/monitor/artists/{artist_id}", dependencies=[Depends(require_auth)])

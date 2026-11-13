@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from . import paths
 from .library import downloaded_ids
+from . import spotify
 from .browse import BrowseError, browser
 from .jobs import INTERRUPTED, manager
 
@@ -90,6 +91,7 @@ class Monitor:
             "time": self.time,
             "last_run_at": self.last_run_at,
             "timezone": _now().tzname(),
+            "spotify_available": spotify.available(),
             "artists": [{k: v for k, v in a.items() if k not in ("known", "jobs")} for a in artists],
         }
 
@@ -102,9 +104,13 @@ class Monitor:
         self._save()
         return self.state()
 
-    async def add_artist(self, artist_id: str) -> dict:
+    async def add_artist(self, artist_id: str, use_spotify: Optional[bool] = None) -> dict:
         artist = await browser.artist(artist_id, fresh=True)
+        if use_spotify is None:
+            use_spotify = spotify.available()  # on by default whenever Spotify search is enabled
         self.artists[artist_id] = {
+            "spotify": use_spotify,
+            "spotify_id": None,
             "id": artist_id,
             "name": artist["name"],
             "image": artist.get("image"),
@@ -120,6 +126,17 @@ class Monitor:
         task = asyncio.create_task(self._sync_one(artist_id))
         self._syncs.add(task)
         task.add_done_callback(self._syncs.discard)
+        return self.state()
+
+    def set_spotify(self, artist_id: str, use_spotify: bool) -> dict:
+        entry = self.artists.get(artist_id)
+        if entry:
+            entry["spotify"] = use_spotify
+            self._save()
+            # Releases the filter was hiding (or now hides) are picked up straight away.
+            task = asyncio.create_task(self._sync_one(artist_id))
+            self._syncs.add(task)
+            task.add_done_callback(self._syncs.discard)
         return self.state()
 
     def remove_artist(self, artist_id: str) -> dict:
@@ -168,6 +185,19 @@ class Monitor:
             return
         entry["last_error"] = None
         entry["name"] = artist["name"]
+
+        if entry.get("spotify") and spotify.available():
+            try:
+                if not entry.get("spotify_id"):
+                    entry["spotify_id"] = await spotify.find_artist_id(artist["name"], _releases(artist))
+                if entry.get("spotify_id"):
+                    artist = await spotify.filter_artist(artist, entry["spotify_id"])
+                else:
+                    entry["last_error"] = "Not found on Spotify, so all Qobuz releases are monitored."
+            except (spotify.SpotifyError, BrowseError) as exc:
+                # Never queue unverified releases when the filter is on; try again next check.
+                entry["last_error"] = f"Spotify: {exc} Will retry at the next check."
+                return
 
         have = downloaded_ids()
         known = set(entry["known"])
