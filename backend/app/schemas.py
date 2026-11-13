@@ -36,6 +36,13 @@ class SoundcloudSettings(BaseModel):
     app_version: str = ""
 
 
+class SpotifySettings(BaseModel):
+    # Search only: Spotify says what an artist really released, Qobuz supplies the files.
+    enabled: bool = False
+    client_id: str = ""
+    client_secret: str = ""
+
+
 class YoutubeSettings(BaseModel):
     enabled: bool = False
     # Unused: streamrip has no YouTube client, so yt-dlp does the work and only saves audio.
@@ -90,6 +97,7 @@ class Settings(BaseModel):
     deezer: DeezerSettings = Field(default_factory=DeezerSettings)
     soundcloud: SoundcloudSettings = Field(default_factory=SoundcloudSettings)
     youtube: YoutubeSettings = Field(default_factory=YoutubeSettings)
+    spotify: SpotifySettings = Field(default_factory=SpotifySettings)
     conversion: ConversionSettings = Field(default_factory=ConversionSettings)
     filepaths: FilepathSettings = Field(default_factory=FilepathSettings)
     downloads: DownloadsSettings = Field(default_factory=DownloadsSettings)

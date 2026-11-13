@@ -36,7 +36,11 @@
     selecting: false,
     selection: new Set(),
     monitored: new Set(),
+    spotifyOn: true, // per-search switch; only matters while Spotify is enabled in Settings
   };
+  try {
+    state.spotifyOn = localStorage.getItem("lucid.spotify") !== "off";
+  } catch (_) {}
 
   const body = () => qs("browse-body");
   const scroller = () => document.querySelector(".content");
@@ -103,6 +107,15 @@
   });
 
   const ytEnabled = () => !!window.youtubeEnabled;
+  const spotifyAvailable = () => !!(window.spotifyEnabled && window.spotifyConfigured);
+  const spotifyActive = () => spotifyAvailable() && state.spotifyOn;
+
+  window.syncSpotifyToggle = () => {
+    const btn = qs("spotify-toggle");
+    btn.hidden = !spotifyAvailable();
+    btn.setAttribute("aria-pressed", String(state.spotifyOn));
+    btn.classList.toggle("on", state.spotifyOn);
+  };
 
   const labelAlbum = (a) => `${a.title} by ${a.artist}`;
   const labelTrack = (t) => (t.artist ? `${t.artist} - ${t.title}` : t.title);
@@ -143,7 +156,7 @@
   function artistCard(a) {
     const sub = a.albums_count ? plural(a.albums_count, "release") : "Artist";
     return `
-      <div class="card card-artist" data-open="artist:${attr(a.id)}" role="link" tabindex="0">
+      <div class="card card-artist" data-open="artist:${attr(a.id)}" ${a.spotify_id ? `data-spotify="${attr(a.spotify_id)}"` : ""} role="link" tabindex="0">
         ${avatar(a.name, a.image)}
         <div class="card-title" title="${attr(a.name)}">${esc(a.name)}</div>
         <div class="card-sub">${esc(sub)}</div>
@@ -252,7 +265,7 @@
     }
     const active = activeSections();
     const total = active.reduce((n, s) => n + r[s.key].length, 0);
-    const warn = (r.errors || []).map((m) => noticeHtml(m, /Settings/i.test(m))).join("");
+    const warn = (r.errors || []).map((m) => noticeHtml(m, /Settings/i.test(m))).join("") + spotifyNote(r);
     if (!total) {
       body().innerHTML = warn || noticeHtml(`No results for “${r.query}”.`);
       return;
@@ -264,9 +277,19 @@
     body().innerHTML = warn + (sections.join("") || noticeHtml("Nothing here."));
   }
 
+  function spotifyNote(r) {
+    const sp = r.spotify;
+    if (!sp) return "";
+    const parts = [];
+    if (sp.albums_total) parts.push(`${sp.albums_found} of ${sp.albums_total} releases`);
+    if (sp.tracks_total) parts.push(`${sp.tracks_found} of ${sp.tracks_total} songs`);
+    const found = parts.length ? ` Found on Qobuz: ${parts.join(", ")}.` : "";
+    return `<p class="spotify-note">Matched against Spotify, so releases filed under the wrong artist are left out.${found} <button type="button" class="link-btn" data-act="spotify-off">Search without Spotify</button></p>`;
+  }
+
   function idleHtml() {
     return `<div class="idle">
-      <p class="idle-title">Search ${ytEnabled() ? "Qobuz and YouTube" : "Qobuz"}</p>
+      <p class="idle-title">Search ${spotifyActive() ? "Qobuz, checked against Spotify" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
       <p>Find artists, albums, songs and playlists, or paste a link to open it directly.</p>
     </div>`;
   }
@@ -434,6 +457,13 @@
           ${bio}
         </div>
       </div>
+      ${
+        d.spotify
+          ? `<p class="spotify-note">Showing releases that Spotify lists for this artist.${
+              d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
+            } <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button></p>`
+          : ""
+      }
       <div class="artist-bar" id="artist-bar"></div>
       <div id="artist-grid"></div>`;
     renderArtistControls();
@@ -505,7 +535,8 @@
     if (!view.data) {
       body().innerHTML = `${backBar()}${loadingHtml()}`;
       try {
-        view.data = await api(`/api/browse/${view.type}/${encodeURIComponent(view.id)}`);
+        const sp = view.type === "artist" && view.spotifyId && spotifyActive() ? `?spotify_id=${encodeURIComponent(view.spotifyId)}` : "";
+        view.data = await api(`/api/browse/${view.type}/${encodeURIComponent(view.id)}${sp}`);
       } catch (err) {
         if (state.current === view) {
           body().innerHTML = `${backBar()}${noticeHtml(err.message, /Settings/i.test(err.message))}`;
@@ -524,8 +555,8 @@
     else if (view.type === "playlist") renderPlaylist(view.data);
   }
 
-  async function open(kind, id) {
-    setCurrent({ type: kind, id, data: null, scroll: 0 }, true);
+  async function open(kind, id, spotifyId) {
+    setCurrent({ type: kind, id, data: null, scroll: 0, spotifyId: spotifyId || "" }, true);
     scroller().scrollTop = 0;
     await render();
   }
@@ -609,8 +640,20 @@
     body().innerHTML = loadingHtml("Searching…");
     qs("browse-toolbar").hidden = true;
     const enc = encodeURIComponent(q);
+    const viaSpotify = spotifyActive();
+    const catalogue = async () => {
+      if (!viaSpotify) return api(`/api/browse/search?q=${enc}`);
+      try {
+        return await api(`/api/browse/spotify?q=${enc}`);
+      } catch (err) {
+        // Spotify trouble shouldn't break search: fall back to plain Qobuz and say so.
+        const plain = await api(`/api/browse/search?q=${enc}`);
+        plain.errors = [`Spotify: ${err.message} Showing unfiltered Qobuz results.`];
+        return plain;
+      }
+    };
     const [qobuz, yt] = await Promise.allSettled([
-      api(`/api/browse/search?q=${enc}`),
+      catalogue(),
       ytEnabled() ? api(`/api/browse/youtube?q=${enc}`) : Promise.resolve({ items: [] }),
     ]);
     if (mine !== state.reqId) return;
@@ -621,7 +664,7 @@
     }
     const data = qobuz.status === "fulfilled" ? qobuz.value : { query: q, albums: [], artists: [], tracks: [], playlists: [] };
     data.youtube = yt.status === "fulfilled" ? yt.value.items : [];
-    data.errors = [];
+    data.errors = data.errors || [];
     if (qobuz.status === "rejected") data.errors.push(qobuz.reason.message);
     if (yt.status === "rejected") data.errors.push(yt.reason.message);
     state.results = data;
@@ -799,6 +842,16 @@
         el.textContent = open ? "Show less" : "Read more";
         return;
       }
+      case "spotify-off":
+        state.spotifyOn = false;
+        persistSpotify();
+        return runSearch(state.query);
+      case "spotify-unfilter": {
+        const v = state.current;
+        v.spotifyId = "";
+        v.data = null;
+        return render();
+      }
       case "art-filter":
         state.artistFilter = arg;
         state.current.artistFilter = arg;
@@ -852,11 +905,25 @@
       renderArtistGrid();
       return;
     }
-    open(kind, id);
+    open(kind, id, el.dataset.spotify);
+  }
+
+  function persistSpotify() {
+    try {
+      localStorage.setItem("lucid.spotify", state.spotifyOn ? "on" : "off");
+    } catch (_) {}
+    window.syncSpotifyToggle();
   }
 
   function initBrowse() {
     const input = qs("search-query");
+    window.syncSpotifyToggle();
+    qs("spotify-toggle").addEventListener("click", () => {
+      state.spotifyOn = !state.spotifyOn;
+      persistSpotify();
+      if (state.query && state.current && state.current.type === "results") runSearch(state.query);
+      else if (!state.query) render();
+    });
     const clear = qs("search-clear");
     let timer = null;
 

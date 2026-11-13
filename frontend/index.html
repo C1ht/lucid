@@ -50,6 +50,7 @@
         <button type="button" class="icon-btn" id="search-clear" title="Clear" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
+        <button type="button" class="btn btn-outline btn-small" id="spotify-toggle" aria-pressed="true" title="Check results against Spotify's catalogue first" hidden>Spotify</button>
         <button type="button" class="btn btn-outline btn-small" id="paste-toggle">Paste link</button>
       </div>
 
@@ -228,6 +229,18 @@
           <p class="panel-note">Adds YouTube results to Search and lets you paste YouTube links. Audio is saved exactly as YouTube serves it (Opus or AAC, lossy) and is never converted to FLAC.</p>
           <div class="field-grid">
             <label class="wide">Cookies<span class="hint">Only needed if downloads fail with "Sign in to confirm you're not a bot". Paste a Netscape-format cookies.txt exported from a browser logged in to YouTube</span><textarea class="input mono" id="youtube-cookies" rows="3" spellcheck="false" placeholder="(unchanged)"></textarea></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Spotify</h2>
+            <label class="switch"><input type="checkbox" id="spotify-enabled"><span class="slider"></span></label>
+          </div>
+          <p class="panel-note">Search only, nothing is downloaded from Spotify. Searches ask Spotify what an artist really released, then look those releases up on Qobuz, so wrong-artist uploads on Qobuz are left out. It can be switched off per search. Needs a free app from developer.spotify.com (Client ID and secret).</p>
+          <div class="field-grid">
+            <label>Client ID<input class="input" id="spotify-client-id" autocomplete="off" spellcheck="false"></label>
+            <label>Client secret<input class="input" id="spotify-client-secret" type="password" autocomplete="off" placeholder="(unchanged)"></label>
           </div>
         </div>
 

@@ -789,3 +789,8 @@ input:focus-visible, select:focus-visible { outline: none; }
   .trow-artist-col { display: none; }
   .kv-grid { grid-template-columns: 1fr; }
 }
+
+/* Spotify: per-search switch and the note that explains the filtering */
+#spotify-toggle { color: var(--text-2); }
+#spotify-toggle.on { color: var(--accent); box-shadow: inset 0 0 0 1px currentColor; }
+.spotify-note { margin: 0 0 18px; font-size: 13px; line-height: 1.5; color: var(--text-2); }

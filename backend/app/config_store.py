@@ -21,6 +21,7 @@ _SECRET_FIELDS = {
     ("deezer", "arl"),
     ("soundcloud", "client_id"),
     ("youtube", "cookies"),
+    ("spotify", "client_secret"),
     ("navidrome", "password"),
 }
 

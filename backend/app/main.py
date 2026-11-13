@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config_store, navidrome, paths, youtube
+from . import config_store, navidrome, paths, spotify, youtube
 from .monitor import monitor
 from .browse import BrowseError, browser
 from .jobs import manager
@@ -104,14 +104,34 @@ async def browse_youtube(q: str) -> dict:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/api/browse/spotify", dependencies=[Depends(require_auth)])
+async def browse_spotify(q: str) -> dict:
+    if not config_store.load_settings().spotify.enabled:
+        raise HTTPException(status_code=400, detail="Spotify search is turned off. Enable it in Settings.")
+    if len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Type at least 2 characters")
+    try:
+        return await spotify.search(q)
+    except spotify.SpotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BrowseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
 @app.get("/api/browse/album/{album_id}", dependencies=[Depends(require_auth)])
 async def browse_album(album_id: str) -> dict:
     return await _browse(browser.album)(album_id)
 
 
 @app.get("/api/browse/artist/{artist_id}", dependencies=[Depends(require_auth)])
-async def browse_artist(artist_id: str) -> dict:
-    return await _browse(browser.artist)(artist_id)
+async def browse_artist(artist_id: str, spotify_id: str = "") -> dict:
+    page = await _browse(browser.artist)(artist_id)
+    if spotify_id and config_store.load_settings().spotify.enabled:
+        try:
+            return await spotify.filter_artist(page, spotify_id)
+        except spotify.SpotifyError:
+            return page  # Spotify hiccup: show the unfiltered page rather than nothing
+    return page
 
 
 @app.get("/api/browse/suggest", dependencies=[Depends(require_auth)])

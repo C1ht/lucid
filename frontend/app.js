@@ -277,6 +277,13 @@ async function loadSettings() {
   qs("youtube-cookies").placeholder = s.youtube.cookies_set ? "(saved, paste to replace)" : "# Netscape HTTP Cookie File";
   window.youtubeEnabled = s.youtube.enabled;
 
+  qs("spotify-enabled").checked = s.spotify.enabled;
+  qs("spotify-client-id").value = s.spotify.client_id;
+  qs("spotify-client-secret").placeholder = s.spotify.client_secret_set ? "(saved, paste to replace)" : "";
+  window.spotifyConfigured = !!(s.spotify.client_id && s.spotify.client_secret_set);
+  window.spotifyEnabled = s.spotify.enabled;
+  if (window.syncSpotifyToggle) window.syncSpotifyToggle();
+
   qs("conv-enabled").checked = s.conversion.enabled;
   qs("conv-codec").value = s.conversion.codec;
   qs("conv-sampling-rate").value = s.conversion.sampling_rate;
@@ -335,6 +342,11 @@ function collectSettings() {
     youtube: {
       enabled: qs("youtube-enabled").checked,
       cookies: qs("youtube-cookies").value,
+    },
+    spotify: {
+      enabled: qs("spotify-enabled").checked,
+      client_id: qs("spotify-client-id").value.trim(),
+      client_secret: qs("spotify-client-secret").value,
     },
     conversion: {
       enabled: qs("conv-enabled").checked,
@@ -407,6 +419,7 @@ function initSettings() {
       await api("/api/settings", { method: "PUT", body: JSON.stringify(collectSettings()) });
       window.youtubeEnabled = qs("youtube-enabled").checked;
       qs("youtube-cookies").value = "";
+      qs("spotify-client-secret").value = "";
       resultEl.textContent = "Saved";
       resultEl.className = "test-result ok";
       showToast("Settings saved", "ok");
