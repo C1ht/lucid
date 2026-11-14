@@ -36,6 +36,7 @@
     selecting: false,
     selection: new Set(),
     monitored: new Set(),
+    monitorList: [],
     spotifyOn: true, // per-search switch; only matters while Spotify is enabled in Settings
   };
   try {
@@ -280,6 +281,9 @@
   function spotifyNote(r) {
     const sp = r.spotify;
     if (!sp) return "";
+    if (sp.source) {
+      return `<p class="spotify-note">Results come from Spotify. Qobuz is only used when you download or preview. <button type="button" class="link-btn" data-act="spotify-off">Search Qobuz instead</button></p>`;
+    }
     const parts = [];
     if (sp.albums_total) parts.push(`${sp.albums_found} of ${sp.albums_total} releases`);
     if (sp.tracks_total) parts.push(`${sp.tracks_found} of ${sp.tracks_total} songs`);
@@ -289,7 +293,7 @@
 
   function idleHtml() {
     return `<div class="idle">
-      <p class="idle-title">Search ${spotifyActive() ? "Qobuz, checked against Spotify" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
+      <p class="idle-title">Search ${spotifyActive() ? "Spotify (downloads come from Qobuz)" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
       <p>Find artists, albums, songs and playlists, or paste a link to open it directly.</p>
     </div>`;
   }
@@ -350,10 +354,11 @@
           <div class="detail-artist">${linkTo("artist", d.artist_id, d.artist)}</div>
           <div class="detail-meta">${meta}</div>
           <div class="detail-actions">
-            <button type="button" class="btn btn-accent btn-icon" data-dl="album:${attr(d.id)}" data-label="${attr(labelAlbum(d))}">${ICON.download}Download album</button>
+            <button type="button" class="btn btn-accent btn-icon" data-dl="album:${attr(d.id)}" data-label="${attr(labelAlbum(d))}" ${d.on_qobuz === false ? "disabled" : ""}>${ICON.download}Download album</button>
           </div>
         </div>
       </div>
+      ${d.on_qobuz === false ? `<p class="spotify-note">This release wasn't found on Qobuz, so it can't be downloaded from here.</p>` : ""}
       ${trackTable(d.tracks)}
       <div class="detail-foot">${[d.copyright, d.label && `Label: ${d.label}`, d.date && `Released ${d.date}`]
         .filter(Boolean)
@@ -463,12 +468,14 @@
       ${
         d.spotify
           ? `<p class="spotify-note">${
-              d.spotify.id
+              d.spotify.source
+                ? "Releases, photo and details come from Spotify. Qobuz is only used for downloading."
+                : d.spotify.id
                 ? `Showing releases that Spotify lists for this artist.${
                     d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
                   }`
                 : "This artist wasn't found on Spotify, so nothing is filtered."
-            } <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button></p>`
+            }${d.spotify.source ? "" : ` <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button>`}</p>`
           : d.spotify_error
             ? `<p class="spotify-note">Spotify: ${esc(d.spotify_error)} Showing unfiltered Qobuz data.</p>`
             : ""
@@ -479,11 +486,19 @@
     renderArtistGrid();
     api("/api/monitor")
       .then((m) => {
-        state.monitored = new Set(m.artists.map((a) => a.id));
+        setMonitored(m);
         if (state.current && state.current.type === "artist" && state.current.data === d) renderArtistControls();
       })
       .catch(() => {});
   }
+
+  // A monitored artist is stored by its Qobuz id (plus the Spotify id once known), but an
+  // artist page opened from Spotify results is identified by "sp:<id>".
+  function setMonitored(m) {
+    state.monitorList = m.artists;
+    state.monitored = new Set(m.artists.map((a) => a.id));
+  }
+  const monitorEntry = (d) => state.monitorList.find((a) => a.id === d.id || (a.spotify_id && "sp:" + a.spotify_id === d.id));
 
   function renderArtistControls() {
     const d = state.current.data;
@@ -495,7 +510,7 @@
       )
       .join("");
     const n = state.selection.size;
-    const watching = state.monitored.has(d.id);
+    const watching = !!monitorEntry(d);
     const monBtn = `<button type="button" class="btn btn-small ${watching ? "btn-accent" : "btn-outline"}" data-act="monitor-toggle">${watching ? "Monitoring" : "Monitor"}</button>`;
     const actions = monBtn + (state.selecting
       ? `<button type="button" class="btn btn-outline btn-small" data-act="select-all">Select all</button>
@@ -874,13 +889,14 @@
         return;
       case "monitor-toggle": {
         const d = state.current.data;
-        const on = state.monitored.has(d.id);
+        const entry = monitorEntry(d);
+        const on = !!entry;
         const req = on
-          ? api(`/api/monitor/artists/${encodeURIComponent(d.id)}`, { method: "DELETE" })
+          ? api(`/api/monitor/artists/${encodeURIComponent(entry.id)}`, { method: "DELETE" })
           : api("/api/monitor/artists", { method: "POST", body: JSON.stringify({ id: d.id }) });
         return req
           .then((m) => {
-            state.monitored = new Set(m.artists.map((a) => a.id));
+            setMonitored(m);
             showToast(on ? `Stopped monitoring ${d.name}` : `Monitoring ${d.name}. Missing releases are being queued.`, "ok");
             renderArtistControls();
             document.dispatchEvent(new Event("monitor-changed"));

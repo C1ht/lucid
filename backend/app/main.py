@@ -119,13 +119,38 @@ async def browse_spotify(q: str) -> dict:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
+async def _spotify_page(build, item_id: str) -> dict:
+    if not spotify.available():
+        raise HTTPException(status_code=400, detail="Spotify is turned off or isn't set up. Check Settings.")
+    try:
+        return await build(item_id)
+    except spotify.SpotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BrowseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+async def _spotify_to_qobuz(media_type: str, item_id: str) -> str:
+    """Qobuz id for a Spotify result, or a clear error when Qobuz doesn't have it."""
+    try:
+        return await spotify.resolve_ids(media_type, item_id)
+    except spotify.SpotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BrowseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
 @app.get("/api/browse/album/{album_id}", dependencies=[Depends(require_auth)])
 async def browse_album(album_id: str) -> dict:
+    if spotify.is_sp(album_id):
+        return await _spotify_page(spotify.album_page, album_id)
     return await _browse(browser.album)(album_id)
 
 
 @app.get("/api/browse/artist/{artist_id}", dependencies=[Depends(require_auth)])
 async def browse_artist(artist_id: str, spotify_id: str = "", spotify_on: bool = False) -> dict:
+    if spotify.is_sp(artist_id):
+        return await _spotify_page(spotify.artist_page, artist_id)
     page = await _browse(browser.artist)(artist_id)
     if (spotify_id or spotify_on) and spotify.available():
         try:
@@ -169,8 +194,8 @@ class CoverFetchRequest(BaseModel):
 async def fetch_cover(req: CoverFetchRequest) -> dict:
     """Use a Qobuz album's artwork as the cover. Only Qobuz's image host is allowed."""
     host = (urlparse(req.url).hostname or "").lower()
-    if urlparse(req.url).scheme != "https" or not (host == "qobuz.com" or host.endswith(".qobuz.com")):
-        raise HTTPException(status_code=400, detail="Only Qobuz artwork can be fetched by link")
+    if urlparse(req.url).scheme != "https" or not any(host == h or host.endswith("." + h) for h in ("qobuz.com", "scdn.co")):
+        raise HTTPException(status_code=400, detail="Only Qobuz or Spotify artwork can be fetched by link")
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             res = await client.get(req.url)
@@ -187,11 +212,15 @@ async def fetch_cover(req: CoverFetchRequest) -> dict:
 
 @app.get("/api/browse/preview/{track_id}", dependencies=[Depends(require_auth)])
 async def browse_preview(track_id: str) -> dict:
+    if spotify.is_sp(track_id):
+        track_id = await _spotify_to_qobuz("track", track_id)
     return await _browse(browser.preview)(track_id)
 
 
 @app.get("/api/browse/track/{track_id}", dependencies=[Depends(require_auth)])
 async def browse_track(track_id: str) -> dict:
+    if spotify.is_sp(track_id):
+        return await _spotify_page(spotify.track_page, track_id)
     return await _browse(browser.track)(track_id)
 
 
@@ -205,6 +234,9 @@ async def download_by_id(req: DownloadByIdRequest) -> dict:
     if req.source == "youtube":
         _require_youtube()
     label = req.desc or f"{req.source} {req.media_type} {req.id}"
+    if spotify.is_sp(req.id):
+        # Spotify results are only a catalogue: the files come from Qobuz.
+        req = req.model_copy(update={"id": await _spotify_to_qobuz(req.media_type, req.id), "source": "qobuz"})
     job = manager.enqueue("id", label, req.model_dump())
     return job.model_dump()
 
@@ -286,7 +318,17 @@ async def put_monitor_schedule(req: MonitorScheduleRequest) -> dict:
 @app.post("/api/monitor/artists", dependencies=[Depends(require_auth)])
 async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
     try:
-        return await monitor.add_artist(req.id, req.spotify)
+        sp_id = None
+        if spotify.is_sp(req.id):
+            sp_id, qid = spotify.raw(req.id), None
+            try:
+                qid = await spotify.qobuz_artist_id(req.id)
+            except spotify.SpotifyError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if not qid:
+                raise HTTPException(status_code=404, detail="Couldn't find this artist on Qobuz, so there's nothing to monitor.")
+            req = req.model_copy(update={"id": qid})
+        return await monitor.add_artist(req.id, req.spotify, sp_id)
     except BrowseError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 

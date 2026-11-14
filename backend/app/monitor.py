@@ -104,13 +104,13 @@ class Monitor:
         self._save()
         return self.state()
 
-    async def add_artist(self, artist_id: str, use_spotify: Optional[bool] = None) -> dict:
+    async def add_artist(self, artist_id: str, use_spotify: Optional[bool] = None, spotify_id: Optional[str] = None) -> dict:
         artist = await browser.artist(artist_id, fresh=True)
         if use_spotify is None:
             use_spotify = spotify.available()  # on by default whenever Spotify search is enabled
         self.artists[artist_id] = {
             "spotify": use_spotify,
-            "spotify_id": None,
+            "spotify_id": spotify_id,
             "id": artist_id,
             "name": artist["name"],
             "image": artist.get("image"),

@@ -31,6 +31,7 @@ MATCH_THRESHOLD = 0.86
 # anything longer with `next` instead of relying on a large `limit`.
 PAGE = 10
 MAX_DISCOGRAPHY = 40
+DISCOGRAPHY_ALL = 300
 
 
 class SpotifyError(Exception):
@@ -180,7 +181,8 @@ class SpotifyClient:
         async def build() -> dict:
             a = await self.get(f"/artists/{artist_id}")
             return {
-                "image": _image(a),
+                "name": a.get("name") or "",
+                "image": _image(a, big=True),
                 "genres": a.get("genres") or [],
                 "followers": (a.get("followers") or {}).get("total"),
             }
@@ -206,30 +208,73 @@ class SpotifyClient:
 
     @staticmethod
     def _album(a: dict) -> dict:
+        arts = a.get("artists") or []
         return {
             "id": a.get("id"),
             "title": a.get("name") or "",
-            "artists": [x.get("name") for x in a.get("artists") or [] if x.get("name")],
+            "artists": [x.get("name") for x in arts if x.get("name")],
+            "artist_ids": [x.get("id") for x in arts if x.get("id")],
             "tracks": a.get("total_tracks"),
             "year": (a.get("release_date") or "")[:4],
+            "date": a.get("release_date") or "",
+            "cover": _image(a, big=False),
+            "cover_large": _image(a, big=True),
+            "group": a.get("album_group") or a.get("album_type") or "album",
+            "label": a.get("label"),
+            "copyright": "; ".join(c.get("text", "") for c in (a.get("copyrights") or [])[:1]),
         }
 
     @staticmethod
     def _track(t: dict) -> dict:
         album = t.get("album") or {}
+        arts = t.get("artists") or []
         return {
             "id": t.get("id"),
             "title": t.get("name") or "",
-            "artists": [x.get("name") for x in t.get("artists") or [] if x.get("name")],
+            "artists": [x.get("name") for x in arts if x.get("name")],
+            "artist_ids": [x.get("id") for x in arts if x.get("id")],
             "album": album.get("name") or "",
+            "album_id": album.get("id"),
+            "cover": _image(album, big=False),
+            "cover_large": _image(album, big=True),
+            "date": album.get("release_date") or "",
             "duration": (t.get("duration_ms") or 0) / 1000,
+            "explicit": bool(t.get("explicit")),
+            "track_number": t.get("track_number"),
+            "disc": t.get("disc_number") or 1,
         }
 
+    async def album(self, album_id: str) -> dict:
+        async def build() -> dict:
+            a = await self.get(f"/albums/{album_id}")
+            out = self._album(a)
+            tracks, page = [], a.get("tracks") or {}
+            while True:
+                for t in page.get("items") or []:
+                    if t:
+                        tracks.append(self._track({**t, "album": a}))
+                if not page.get("next"):
+                    break
+                page = await self.get(page["next"])
+            out["track_list"] = tracks
+            out["genres"] = a.get("genres") or []
+            return out
 
-def _image(artist: dict) -> Optional[str]:
-    # Spotify lists images largest first; the middle one (~320px) suits cards and the page header.
-    imgs = artist.get("images") or []
-    return (imgs[1] if len(imgs) > 1 else imgs[0])["url"] if imgs else None
+        return await self.cached(f"album:{album_id}", build)
+
+    async def track(self, track_id: str) -> dict:
+        async def build() -> dict:
+            return self._track(await self.get(f"/tracks/{track_id}"))
+
+        return await self.cached(f"track:{track_id}", build)
+
+
+def _image(item: dict, big: bool = False) -> Optional[str]:
+    # Spotify lists images largest first (640, 300, 64). Cards use the middle one.
+    imgs = item.get("images") or []
+    if not imgs:
+        return None
+    return imgs[0]["url"] if big or len(imgs) == 1 else imgs[1]["url"]
 
 
 client = SpotifyClient()
@@ -282,60 +327,192 @@ async def _resolve_track(sp: dict) -> Optional[dict]:
     return best
 
 
+PREFIX = "sp:"
+
+
+def is_sp(item_id: str) -> bool:
+    return item_id.startswith(PREFIX)
+
+
+def raw(item_id: str) -> str:
+    return item_id[len(PREFIX):]
+
+
+def _kind(group: str, tracks: Optional[int]) -> str:
+    if group == "single":
+        return "ep" if (tracks or 1) >= 4 else "single"  # Spotify files EPs under "single"
+    return "album"
+
+
+def album_card(a: dict) -> dict:
+    """Spotify album in the same shape the UI uses for Qobuz ones; ids carry "sp:"."""
+    return {
+        "id": PREFIX + a["id"],
+        "title": a["title"],
+        "artist": a["artists"][0] if a["artists"] else "Unknown artist",
+        "artist_id": PREFIX + a["artist_ids"][0] if a["artist_ids"] else None,
+        "cover": a["cover"],
+        "cover_large": a["cover_large"],
+        "genre": None,
+        "year": a["year"],
+        "date": a["date"],
+        "tracks_count": a["tracks"],
+        "duration": None,
+        "explicit": False,
+        "quality": None,
+        "kind": _kind(a["group"], a["tracks"]),
+        "primary": True,
+    }
+
+
+def track_row(t: dict) -> dict:
+    return {
+        "id": PREFIX + t["id"],
+        "title": t["title"],
+        "artist": ", ".join(t["artists"]),
+        "artist_id": PREFIX + t["artist_ids"][0] if t["artist_ids"] else None,
+        "album": t["album"],
+        "album_id": PREFIX + t["album_id"] if t.get("album_id") else None,
+        "cover": t["cover"],
+        "cover_large": t["cover_large"],
+        "duration": t["duration"],
+        "explicit": t["explicit"],
+        "track_number": t["track_number"],
+        "disc": t["disc"],
+        "quality": None,
+        "date": t["date"],
+    }
+
+
+def artist_card(a: dict) -> dict:
+    return {"id": PREFIX + a["id"], "name": a["name"], "image": a.get("image"), "albums_count": None}
+
+
 async def search(query: str) -> dict:
-    """Search Spotify, then return only what also exists on Qobuz (Qobuz ids)."""
+    """Search Spotify only. Nothing here touches Qobuz; Qobuz is looked up when
+    something is actually downloaded or previewed."""
     query = query.strip()
     sp = await client.search(query)
-
     artists = sp["artists"]
-    # An artist query ("skinz"): use that artist's real discography. Otherwise
-    # (a song or album title) use Spotify's own album/track hits.
+    # An artist query ("skinz"): show that artist's real discography. Otherwise
+    # (a song or album title) use Spotify's own album hits.
     lead = artists[0] if artists and sim(artists[0]["name"], query) >= 0.8 else None
-    others = [a for a in artists if a is not lead][:2]
-
-    albums_sp = list(sp["albums"])
+    albums = list(sp["albums"])
     if lead:
-        albums_sp = await client.discography(lead["id"])
-    # Albums by the other artists, just enough to find out who they are on Qobuz.
-    extra: dict[str, list[dict]] = {}
-    for a in others:
-        extra[a["id"]] = [x for x in sp["albums"] if _artist_ok(a["name"], x["artists"])][:4]
-
-    album_hits, track_hits = await asyncio.gather(
-        asyncio.gather(*[_resolve_album(a) for a in albums_sp]),
-        asyncio.gather(*[_resolve_track(t) for t in sp["tracks"]]),
-    )
-    albums = _dedupe([c for c in album_hits if c])
-    tracks = _dedupe([c for c in track_hits if c])
-
-    # Qobuz artist cards: the Qobuz artist id that owns the releases Spotify vouches for.
-    cards = []
-    for a in ([lead] if lead else []) + others:
-        mine = [c for c, s in zip(album_hits, albums_sp) if c and _artist_ok(a["name"], s["artists"])]
-        mine += [c for c in albums if _artist_ok(a["name"], [c["artist"]])]
-        ids = [c["artist_id"] for c in mine if c.get("artist_id")]
-        if not ids:
-            continue
-        qid = max(set(ids), key=ids.count)
-        card = await _artist_card(qid, a["name"])
-        card["spotify_id"] = a["id"]
-        card["image"] = a.get("image") or card.get("image")
-        if card["id"] not in {x["id"] for x in cards}:
-            cards.append(card)
-
+        albums = await client.discography(lead["id"])
     return {
         "query": query,
-        "albums": albums,
-        "artists": cards,
-        "tracks": tracks,
+        "albums": _dedupe([album_card(a) for a in albums]),
+        "artists": [artist_card(a) for a in artists[:6]],
+        "tracks": [track_row(t) for t in sp["tracks"]],
         "playlists": [],
-        "spotify": {
-            "albums_found": len(albums),
-            "albums_total": len(albums_sp),
-            "tracks_found": len(tracks),
-            "tracks_total": len(sp["tracks"]),
-        },
+        "spotify": {"source": True},
     }
+
+
+# ---------- detail pages (Spotify data, Qobuz only for ids) ----------
+
+
+async def artist_page(item_id: str) -> dict:
+    sid = raw(item_id)
+    meta = await client.artist(sid)
+    disco = await client.discography(sid, DISCOGRAPHY_ALL)
+    return {
+        "id": item_id,
+        "name": meta["name"],
+        "image": meta.get("image"),
+        "bio": "",  # Spotify's API has no biography
+        "genres": meta.get("genres") or [],
+        "followers": meta.get("followers"),
+        "albums": sorted((album_card(a) for a in disco), key=lambda c: c["date"] or "", reverse=True),
+        "spotify": {"id": sid, "source": True},
+    }
+
+
+async def album_page(item_id: str) -> dict:
+    a = await client.album(raw(item_id))
+    card = album_card(a)
+    tracks = [track_row(t) for t in a["track_list"]]
+    card.update(
+        {
+            "cover_large": a["cover_large"],
+            "genre": ", ".join(a.get("genres") or []) or None,
+            "label": a.get("label"),
+            "copyright": a.get("copyright"),
+            "tracks": tracks,
+            "tracks_count": a["tracks"] or len(tracks),
+            "disc_count": max([t["disc"] for t in tracks] or [1]),
+            "duration": int(sum(t["duration"] or 0 for t in tracks)) or None,
+            "on_qobuz": True,
+        }
+    )
+    try:
+        await qobuz_album_id(item_id)
+    except BrowseError:
+        card["on_qobuz"] = False
+    return card
+
+
+async def track_page(item_id: str) -> dict:
+    return track_row(await client.track(raw(item_id)))
+
+
+# ---------- turning "sp:" ids into Qobuz ids (download / preview time) ----------
+
+_resolved: dict[str, tuple[float, str]] = {}
+
+
+def _remember(key: str, value: str) -> str:
+    _resolved[key] = (time.monotonic(), value)
+    return value
+
+
+def _recall(key: str) -> Optional[str]:
+    hit = _resolved.get(key)
+    return hit[1] if hit and time.monotonic() - hit[0] < 3600 else None
+
+
+async def qobuz_album_id(item_id: str) -> str:
+    if (hit := _recall(item_id)) is not None:
+        return hit
+    a = await client.album(raw(item_id))
+    card = await _resolve_album(a)
+    if not card:
+        raise BrowseError("This release isn't available on Qobuz.", 404)
+    return _remember(item_id, card["id"])
+
+
+async def qobuz_track_id(item_id: str) -> str:
+    if (hit := _recall(item_id)) is not None:
+        return hit
+    t = await client.track(raw(item_id))
+    card = await _resolve_track(t)
+    if not card:
+        raise BrowseError("This song isn't available on Qobuz.", 404)
+    return _remember(item_id, card["id"])
+
+
+async def qobuz_artist_id(item_id: str) -> Optional[str]:
+    """The Qobuz artist whose releases line up with this Spotify artist's, for monitoring."""
+    if (hit := _recall(item_id)) is not None:
+        return hit
+    sid = raw(item_id)
+    name = (await client.artist(sid))["name"]
+    disco = (await client.discography(sid))[:8]
+    hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in disco]) if c]
+    ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
+    return _remember(item_id, max(set(ids), key=ids.count)) if ids else None
+
+
+async def resolve_ids(media_type: str, item_id: str) -> str:
+    """Download requests: swap a Spotify id for the Qobuz one (others pass through)."""
+    if not is_sp(item_id):
+        return item_id
+    if media_type == "album":
+        return await qobuz_album_id(item_id)
+    if media_type == "track":
+        return await qobuz_track_id(item_id)
+    raise BrowseError("Only albums and songs can be downloaded from Spotify results.", 400)
 
 
 def _dedupe(items: list[dict]) -> list[dict]:
