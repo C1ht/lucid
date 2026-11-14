@@ -139,7 +139,7 @@ async def _run() -> None:
         unmatched: list[dict] = []
         for group in by_artist.values():
             disco = await _spotify_artist(group[0]["artist"], [a["album"] for a in group])
-            titles = [d["title"] for d in disco] if disco is not None else []
+            titles = [d["title"] for d in disco if d.get("verified", True)] if disco is not None else []
             for a in group:
                 if disco is None:
                     reason = f"Artist not found on {provider}"

@@ -499,18 +499,22 @@
     { key: "ep", label: "EPs" },
     { key: "single", label: "Singles" },
     { key: "appears", label: "Appears on" },
+    { key: "unverified", label: "Unverified" },
   ];
 
   function artistGroups(d) {
-    const primary = d.albums.filter((a) => a.primary);
+    // "Unverified": only MusicBrainz lists them, which is where AI-generated uploads slip in.
+    const verified = d.albums.filter((a) => a.verified !== false);
+    const primary = verified.filter((a) => a.primary);
     // Some artists (labels, composers) have no releases credited as primary.
-    const own = primary.length ? primary : d.albums;
+    const own = primary.length ? primary : verified;
     return {
       all: own,
       album: own.filter((a) => a.kind === "album"),
       ep: own.filter((a) => a.kind === "ep"),
       single: own.filter((a) => a.kind === "single"),
-      appears: primary.length ? d.albums.filter((a) => !a.primary) : [],
+      appears: primary.length ? verified.filter((a) => !a.primary) : [],
+      unverified: d.albums.filter((a) => a.verified === false),
     };
   }
 
@@ -592,8 +596,12 @@
   function renderArtistGrid() {
     const d = state.current.data;
     const items = artistGroups(d)[state.artistFilter] || [];
+    const warn =
+      state.artistFilter === "unverified"
+        ? `<p class="spotify-note">Only MusicBrainz lists these; Deezer doesn't. That's where mistaken and AI-generated uploads usually show up, so they're kept out of the main list. Download at your own risk.</p>`
+        : "";
     qs("artist-grid").innerHTML = items.length
-      ? `<div class="grid">${items.map((a) => albumCard(a, { artistPage: true })).join("")}</div>`
+      ? `${warn}<div class="grid">${items.map((a) => albumCard(a, { artistPage: true })).join("")}</div>`
       : noticeHtml("Nothing in this category.");
   }
 

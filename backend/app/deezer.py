@@ -152,13 +152,13 @@ class Deezer:
         except CatalogError:
             return None
 
-    async def extras(self, name: str, base: list[dict]) -> list[dict]:
-        """Deezer releases for this artist that `base` (MusicBrainz) doesn't have."""
+    async def releases_for(self, name: str, base: list[dict]) -> Optional[list[dict]]:
+        """All Deezer releases of the Deezer artist matching `base` (MusicBrainz), or None
+        when no Deezer artist overlaps it (then there is nothing to cross-check against)."""
         artist = await self.find_artist(name, [a["title"] for a in base])
         if not artist:
-            return []
-        albums = await self.discography(str(artist["id"]), 300, artist)
-        return [a for a in albums if not any(sim(a["title"], b["title"]) >= MATCH_THRESHOLD for b in base)]
+            return None
+        return await self.discography(str(artist["id"]), 300, artist)
 
 
 client = Deezer()

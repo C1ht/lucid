@@ -387,6 +387,7 @@ def album_card(a: dict) -> dict:
         "quality": None,
         "kind": _kind(a["group"], a["tracks"]),
         "primary": a.get("primary", True),  # False: only a guest feature ("appears on")
+        "verified": a.get("verified", True),  # False: only MusicBrainz lists it
         "via": a.get("via"),
     }
 
@@ -448,7 +449,7 @@ async def _lastfm_extras(item_id: str, name: str, disco: list[dict]) -> list[dic
     if not item_id.startswith("mb:") or not lastfm.available():
         return []
     plays = await lastfm.top_albums(raw(item_id))
-    known = [d["title"] for d in disco]
+    known = [d["title"] for d in disco if d.get("verified", True)]
     gaps = [
         (title, n)
         for key, (title, n) in plays.items()
@@ -719,14 +720,25 @@ async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
 
 
 async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[dict]:
-    """The catalogue's releases for an artist, plus (MusicBrainz only) the ones Deezer adds."""
-    base = await _client_for(item_id).discography(raw(item_id), limit)
+    """The catalogue's releases for an artist, cross-checked and extended with Deezer's.
+
+    MusicBrainz is open to anyone, and AI-generated uploads do end up in it, so a release only
+    MusicBrainz lists (not Deezer, and not vouched for by Last.fm listening) is marked
+    `verified: False`. Releases only Deezer lists are added; Deezer alone is trusted because its
+    artist was matched on overlapping albums."""
+    base = [dict(a) for a in await _client_for(item_id).discography(raw(item_id), limit)]
     if item_id.startswith("mb:") and config_store.load_settings().catalog.include_deezer:
         try:
             name = (await _artist_meta(item_id))["name"]
-            base = base + await deezer.client.extras(name, base)
+            dz = await deezer.client.releases_for(name, base)
         except CatalogError:
-            pass  # Deezer is a bonus; never fail the page over it
+            dz = None
+        if dz is not None:
+            plays = await lastfm.top_albums(raw(item_id))
+            trusted = [a["title"] for a in dz] + [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
+            for a in base:
+                a["verified"] = any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted)
+            base += [a for a in dz if not any(sim(a["title"], b["title"]) >= MATCH_THRESHOLD for b in base)]
     return base
 
 
@@ -747,7 +759,7 @@ async def filter_artist(page: dict, artist_id: Optional[str]) -> dict:
     if not artist_id:
         return {**page, "bio": "", "spotify": {"id": None, "hidden": 0}}
     c = _client_for(artist_id)
-    titles = [d["title"] for d in await full_discography(artist_id, 300)]
+    titles = [d["title"] for d in await full_discography(artist_id, 300) if d.get("verified", True)]
     plays = await lastfm.top_albums(raw(artist_id)) if artist_id.startswith("mb:") else {}
     vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
     kept, hidden = [], 0
