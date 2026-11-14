@@ -776,6 +776,65 @@ async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[d
 discography_for = full_discography
 
 
+async def library_match(name: str, albums: list[str], years: Optional[list[str]] = None) -> tuple[bool, list[bool]]:
+    """Library check: is this artist known, and which of their local albums are real?
+
+    The same rules as search: identify the artist by overlapping albums (so a same-name artist is
+    never used), trust Deezer's releases, trust older MusicBrainz ones, and only doubt recent
+    releases that MusicBrainz alone lists, unless Last.fm shows real listening. Returns
+    (artist known, matched flag per album). Raises CatalogError when a source is unreachable, so
+    the caller can skip the artist instead of wrongly calling its albums fake.
+
+    `years` (the albums' year tags) lets it skip MusicBrainz when it can't change the verdict:
+    for an artist Deezer identified, only a pre-2023 album can still be rescued by MusicBrainz."""
+    c = active()
+    matched = [False] * len(albums)
+    known = False
+
+    def mark(titles: list[str]) -> None:
+        for i, a in enumerate(albums):
+            if not matched[i] and any(sim(a, t) >= MATCH_THRESHOLD for t in titles):
+                matched[i] = True
+
+    if c is client:  # Spotify
+        sid = await find_artist_id(name, [{"title": a} for a in albums])
+        if sid:
+            known = True
+            mark([d["title"] for d in await full_discography(sid, 300) if d.get("verified", True)])
+    else:
+        dz = None
+        if config_store.load_settings().catalog.include_deezer:
+            dz = await deezer.client.find_artist(name, albums, strict=True)
+            if dz:
+                known = True
+                mark([a["title"] for a in await deezer.client.discography(str(dz["id"]), 300, dz)])
+        def rescuable(i: int) -> bool:
+            y = ((years or [""] * len(albums))[i] or "")[:4]
+            return dz is None or not y.isdigit() or int(y) < AI_ERA_YEAR
+
+        if any(not matched[i] and rescuable(i) for i in range(len(albums))):  # MusicBrainz, then Last.fm
+            named = [a for a in await musicbrainz.client.artist_candidates(name) if sim(a["name"], name) >= 0.9][:3]
+            best, best_score = None, 0
+            for cand in named:
+                disco = await musicbrainz.client.discography(cand["id"], 100)
+                score = sum(1 for a in albums if any(sim(a, d["title"]) >= MATCH_THRESHOLD for d in disco))
+                if score > best_score:
+                    best, best_score = (cand, disco), score
+                if best_score * 2 >= len(albums):
+                    break  # clearly the right one; every extra candidate costs a second
+            if best:
+                known = True
+                cand, disco = best
+                plays = await lastfm.top_albums(cand["id"])
+                vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
+                mark([d["title"] for d in disco if dz is None or _pre_ai(d)] + vouched)
+    # Last.fm by name can only *keep* an album, never condemn one.
+    for i, a in enumerate(albums):
+        if not matched[i] and await lastfm.album_plays(name, a) >= lastfm.VOUCH_PLAYS:
+            matched[i] = True
+    return known, matched
+
+
 # ---------- filtering a Qobuz artist page ----------
 
 

@@ -149,6 +149,18 @@ class MusicBrainz:
 
     # ---- catalogue interface ----
 
+    async def artist_candidates(self, name: str) -> list[dict]:
+        """Artists of this name (one request); the library check uses it to identify artists."""
+        q = _q(name)
+        if not q:
+            return []
+        arts = (await self.get("/artist", {"query": q, "limit": 6})).get("artists") or []
+        return [
+            {"p": PREFIX, "id": a["id"], "name": a["name"], "popularity": a.get("score", 0), "image": None,
+             "sub": ", ".join(x for x in [a.get("disambiguation"), a.get("country")] if x)}
+            for a in arts
+        ]
+
     async def search(self, query: str) -> dict:
         q = _q(query)
         if not q:

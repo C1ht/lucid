@@ -89,7 +89,7 @@
     if (s.status === "done") {
       const st = s.stats;
       qs("lib-review").hidden = !s.items.length;
-      status(`${st.matched} of ${st.albums} albums match, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}`, st.unmatched ? "" : "ok");
+      status(`${st.matched} of ${st.albums} albums match, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}${st.unchecked ? ` ${plural(st.unchecked, "artist")} couldn't be checked (a source was unreachable), so none of their albums are listed. Run it again.` : ""}`, st.unmatched ? "" : "ok");
       if (s.items.length && qs("lib-start").dataset.fresh) open(s.items);
       else items = s.items;
       delete qs("lib-start").dataset.fresh;

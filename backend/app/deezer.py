@@ -188,8 +188,9 @@ class Deezer:
 
     # ---- matching a MusicBrainz artist to its Deezer artist ----
 
-    async def find_artist(self, name: str, titles: list[str]) -> Optional[dict]:
-        """The Deezer artist with this name whose albums overlap `titles`, or None."""
+    async def find_artist(self, name: str, titles: list[str], strict: bool = False) -> Optional[dict]:
+        """The Deezer artist with this name whose albums overlap `titles`, or None. With
+        `strict`, an unreachable Deezer raises instead of looking like "no such artist"."""
         if not titles:
             return None
         try:
@@ -205,6 +206,8 @@ class Deezer:
                     best, best_score = cand, score
             return best
         except CatalogError:
+            if strict:
+                raise
             return None
 
     async def releases_for(self, name: str, base: list[dict]) -> Optional[list[dict]]:

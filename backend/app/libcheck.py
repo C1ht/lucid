@@ -10,6 +10,7 @@ deletion only ever touches files the last scan reported.
 import asyncio
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -62,13 +63,14 @@ def _first(tags, key: str) -> str:
 
 
 def _read(path: Path, root: Path) -> dict:
-    artist = album = title = ""
+    artist = album = title = year = ""
     try:
         f = mutagen.File(path, easy=True)
         tags = f.tags if f is not None else None
         artist = _first(tags, "albumartist") or _first(tags, "artist")
         album = _first(tags, "album")
         title = _first(tags, "title")
+        year = _first(tags, "date")[:4]
     except Exception:  # unreadable tags: fall back to the folder layout
         pass
     parts = path.relative_to(root).parts
@@ -81,28 +83,29 @@ def _read(path: Path, root: Path) -> dict:
         "artist": artist,
         "album": album,
         "title": title or path.stem,
+        "year": year,
     }
 
 
 def _scan_files(root: Path) -> list[dict]:
-    out = []
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and p.suffix.lower() in AUDIO_EXTS and not p.name.endswith(".part"):
-            out.append(_read(p, root))
-    return out
+    paths = [p for p in sorted(root.rglob("*")) if p.is_file() and p.suffix.lower() in AUDIO_EXTS and not p.name.endswith(".part")]
+    # Reading tags is I/O bound, so do it in parallel.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(lambda p: _read(p, root), paths))
 
 
 # ---------- the check ----------
 
 
-async def _spotify_artist(name: str, local_albums: list[str]) -> Optional[list[dict]]:
-    """Discography of the Spotify artist that best matches this local artist, or None."""
+async def _check_artist(name: str, albums: list[str], years: Optional[list[str]] = None) -> tuple[bool, list[bool]]:
+    """Known + per-album verdicts, trying the first name of a "A, B" credit if the whole isn't known."""
     names = [name] + [n for n in _SPLIT.split(name) if n and n != name][:1]
+    result: tuple[bool, list[bool]] = (False, [False] * len(albums))
     for n in names:
-        sid = await spotify.find_artist_id(n, [{"title": a} for a in local_albums])
-        if sid:
-            return await spotify.discography_for(sid, DISCOGRAPHY_LIMIT)
-    return None
+        result = await spotify.library_match(n, albums, years)
+        if result[0]:
+            break
+    return result
 
 
 async def _run() -> None:
@@ -124,7 +127,8 @@ async def _run() -> None:
                 skipped += 1  # compilations and untagged files can't be judged
                 continue
             key = (spotify.norm(f["artist"]), spotify.norm(f["album"]))
-            a = albums.setdefault(key, {"artist": f["artist"], "album": f["album"], "tracks": []})
+            a = albums.setdefault(key, {"artist": f["artist"], "album": f["album"], "year": "", "tracks": []})
+            a["year"] = a["year"] or f.get("year", "")
             a["tracks"].append({"path": f["path"], "title": f["title"]})
         state.stats["skipped"] = skipped
         state.stats["albums"] = len(albums)
@@ -134,26 +138,32 @@ async def _run() -> None:
             by_artist.setdefault(spotify.norm(a["artist"]), []).append(a)
 
         provider = spotify.name_of(spotify.active())
+        if provider == "MusicBrainz" and settings.catalog.include_deezer:
+            provider = "MusicBrainz/Deezer"
         state.stage = f"Checking against {provider}"
         state.total, state.done = len(by_artist), 0
         unmatched: list[dict] = []
-        for group in by_artist.values():
-            disco = await _spotify_artist(group[0]["artist"], [a["album"] for a in group])
-            titles = [d["title"] for d in disco if d.get("verified", True)] if disco is not None else []
-            for a in group:
-                if disco is None:
-                    reason = f"Artist not found on {provider}"
-                elif any(spotify.sim(a["album"], t) >= spotify.MATCH_THRESHOLD for t in titles):
+        state.stats["unchecked"] = 0
+        gate = asyncio.Semaphore(8)  # Deezer runs in parallel; MusicBrainz queues itself at 1 request/s
+
+        async def check(group: list[dict]) -> None:
+            async with gate:
+                try:
+                    known, ok = await _check_artist(group[0]["artist"], [a["album"] for a in group], [a["year"] for a in group])
+                except (spotify.SpotifyError, BrowseError):
+                    # A source was unreachable. Say nothing about this artist rather than
+                    # calling its albums fake and offering them for deletion.
+                    state.stats["unchecked"] += 1
+                    state.done += 1
+                    return
+            for a, good in zip(group, ok):
+                if good:
                     state.stats["matched"] += 1
-                    continue
-                elif await lastfm.album_plays(a["artist"], a["album"]) >= lastfm.VOUCH_PLAYS:
-                    state.stats["matched"] += 1  # Last.fm shows real listening: keep it
-                    continue
                 else:
-                    reason = f"Not on this artist's {provider} page"
-                unmatched.append({**a, "reason": reason})
+                    unmatched.append({**a, "reason": f"Artist not found on {provider}" if not known else f"Not on this artist's {provider} page"})
             state.done += 1
-            await asyncio.sleep(0.2)  # stay well under Spotify's rate limit
+
+        await asyncio.gather(*[check(g) for g in by_artist.values()])
 
         unmatched.sort(key=lambda a: (a["artist"].lower(), a["album"].lower()))
         for i, a in enumerate(unmatched):
