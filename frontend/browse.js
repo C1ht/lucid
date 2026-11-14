@@ -453,7 +453,10 @@
         <div class="detail-info">
           <div class="eyebrow">Artist</div>
           <h1 class="detail-title">${esc(d.name)}</h1>
-          <div class="detail-meta">${esc(plural(g.all.length, "release"))}${g.appears.length ? ` · appears on ${g.appears.length}` : ""}</div>
+          <div class="detail-meta">${esc(plural(g.all.length, "release"))}${g.appears.length ? ` · appears on ${g.appears.length}` : ""}${
+            d.followers ? ` · ${esc(d.followers.toLocaleString())} followers` : ""
+          }</div>
+          ${d.genres && d.genres.length ? `<div class="detail-meta">${esc(d.genres.slice(0, 4).join(", "))}</div>` : ""}
           ${bio}
         </div>
       </div>

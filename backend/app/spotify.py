@@ -154,7 +154,12 @@ class SpotifyClient:
             )
             return {
                 "artists": [
-                    {"id": a["id"], "name": a["name"], "popularity": a.get("popularity", 0)}
+                    {
+                        "id": a["id"],
+                        "name": a["name"],
+                        "popularity": a.get("popularity", 0),
+                        "image": _image(a),
+                    }
                     for a in (resp.get("artists") or {}).get("items", [])
                     if a
                 ],
@@ -163,6 +168,17 @@ class SpotifyClient:
             }
 
         return await self.cached(f"search:{query.lower()}", build)
+
+    async def artist(self, artist_id: str) -> dict:
+        async def build() -> dict:
+            a = await self.get(f"/artists/{artist_id}")
+            return {
+                "image": _image(a),
+                "genres": a.get("genres") or [],
+                "followers": (a.get("followers") or {}).get("total"),
+            }
+
+        return await self.cached(f"artist:{artist_id}", build)
 
     async def discography(self, artist_id: str, limit: int = MAX_DISCOGRAPHY) -> list[dict]:
         async def build() -> list[dict]:
@@ -201,6 +217,12 @@ class SpotifyClient:
             "album": album.get("name") or "",
             "duration": (t.get("duration_ms") or 0) / 1000,
         }
+
+
+def _image(artist: dict) -> Optional[str]:
+    # Spotify lists images largest first; the middle one (~320px) suits cards and the page header.
+    imgs = artist.get("images") or []
+    return (imgs[1] if len(imgs) > 1 else imgs[0])["url"] if imgs else None
 
 
 client = SpotifyClient()
@@ -290,6 +312,7 @@ async def search(query: str) -> dict:
         qid = max(set(ids), key=ids.count)
         card = await _artist_card(qid, a["name"])
         card["spotify_id"] = a["id"]
+        card["image"] = a.get("image") or card.get("image")
         if card["id"] not in {x["id"] for x in cards}:
             cards.append(card)
 
@@ -357,4 +380,17 @@ async def filter_artist(page: dict, spotify_artist_id: str) -> dict:
             kept.append(a)
         else:
             hidden += 1
-    return {**page, "albums": kept, "spotify": {"id": spotify_artist_id, "hidden": hidden}}
+    meta: dict = {}
+    try:
+        meta = await client.artist(spotify_artist_id)
+    except SpotifyError:
+        pass  # the filtered list is still useful without the extras
+    return {
+        **page,
+        "albums": kept,
+        "image": meta.get("image") or page.get("image"),
+        # Spotify's API has no biography, so the Qobuz one stays.
+        "genres": meta.get("genres") or [],
+        "followers": meta.get("followers"),
+        "spotify": {"id": spotify_artist_id, "hidden": hidden},
+    }

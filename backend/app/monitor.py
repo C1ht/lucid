@@ -192,6 +192,7 @@ class Monitor:
                     entry["spotify_id"] = await spotify.find_artist_id(artist["name"], _releases(artist))
                 if entry.get("spotify_id"):
                     artist = await spotify.filter_artist(artist, entry["spotify_id"])
+                    entry["image"] = artist.get("image") or entry.get("image")
                 else:
                     entry["last_error"] = "Not found on Spotify, so all Qobuz releases are monitored."
             except (spotify.SpotifyError, BrowseError) as exc:
