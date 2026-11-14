@@ -462,10 +462,16 @@
       </div>
       ${
         d.spotify
-          ? `<p class="spotify-note">Showing releases that Spotify lists for this artist.${
-              d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
+          ? `<p class="spotify-note">${
+              d.spotify.id
+                ? `Showing releases that Spotify lists for this artist.${
+                    d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
+                  }`
+                : "This artist wasn't found on Spotify, so nothing is filtered."
             } <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button></p>`
-          : ""
+          : d.spotify_error
+            ? `<p class="spotify-note">Spotify: ${esc(d.spotify_error)} Showing unfiltered Qobuz data.</p>`
+            : ""
       }
       <div class="artist-bar" id="artist-bar"></div>
       <div id="artist-grid"></div>`;
@@ -538,7 +544,11 @@
     if (!view.data) {
       body().innerHTML = `${backBar()}${loadingHtml()}`;
       try {
-        const sp = view.type === "artist" && view.spotifyId && spotifyActive() ? `?spotify_id=${encodeURIComponent(view.spotifyId)}` : "";
+        // Any way of reaching an artist page gets the Spotify treatment while it's on.
+        const sp =
+          view.type === "artist" && !view.plain && spotifyActive()
+            ? `?spotify_on=true${view.spotifyId ? `&spotify_id=${encodeURIComponent(view.spotifyId)}` : ""}`
+            : "";
         view.data = await api(`/api/browse/${view.type}/${encodeURIComponent(view.id)}${sp}`);
       } catch (err) {
         if (state.current === view) {
@@ -852,6 +862,7 @@
       case "spotify-unfilter": {
         const v = state.current;
         v.spotifyId = "";
+        v.plain = true;
         v.data = null;
         return render();
       }

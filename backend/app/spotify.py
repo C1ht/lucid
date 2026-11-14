@@ -370,8 +370,14 @@ async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
 # ---------- filtering a Qobuz artist page ----------
 
 
-async def filter_artist(page: dict, spotify_artist_id: str) -> dict:
-    """Hide releases on a Qobuz artist page that Spotify's discography doesn't list."""
+async def filter_artist(page: dict, spotify_artist_id: Optional[str]) -> dict:
+    """Hide releases on a Qobuz artist page that Spotify's discography doesn't list,
+    and swap in Spotify's artist details. Finds the Spotify artist itself when
+    the page wasn't reached from a Spotify search."""
+    if not spotify_artist_id:
+        spotify_artist_id = await find_artist_id(page["name"], [a for a in page["albums"] if a.get("primary")] or page["albums"])
+    if not spotify_artist_id:
+        return {**page, "bio": "", "spotify": {"id": None, "hidden": 0}}
     disco = await client.discography(spotify_artist_id)
     titles = [d["title"] for d in disco]
     kept, hidden = [], 0
@@ -389,7 +395,8 @@ async def filter_artist(page: dict, spotify_artist_id: str) -> dict:
         **page,
         "albums": kept,
         "image": meta.get("image") or page.get("image"),
-        # Spotify's API has no biography, so the Qobuz one stays.
+        # Spotify's API has no biography; the Qobuz one is dropped rather than mixed in.
+        "bio": "",
         "genres": meta.get("genres") or [],
         "followers": meta.get("followers"),
         "spotify": {"id": spotify_artist_id, "hidden": hidden},

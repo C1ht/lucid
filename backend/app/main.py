@@ -125,13 +125,13 @@ async def browse_album(album_id: str) -> dict:
 
 
 @app.get("/api/browse/artist/{artist_id}", dependencies=[Depends(require_auth)])
-async def browse_artist(artist_id: str, spotify_id: str = "") -> dict:
+async def browse_artist(artist_id: str, spotify_id: str = "", spotify_on: bool = False) -> dict:
     page = await _browse(browser.artist)(artist_id)
-    if spotify_id and config_store.load_settings().spotify.enabled:
+    if (spotify_id or spotify_on) and spotify.available():
         try:
-            return await spotify.filter_artist(page, spotify_id)
-        except spotify.SpotifyError:
-            return page  # Spotify hiccup: show the unfiltered page rather than nothing
+            return await spotify.filter_artist(page, spotify_id or None)
+        except spotify.SpotifyError as exc:
+            return {**page, "spotify_error": str(exc)}  # show the unfiltered page rather than nothing
     return page
 
 
