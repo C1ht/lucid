@@ -164,13 +164,13 @@ class SpotifyClient:
 
         return await self.cached(f"search:{query.lower()}", build)
 
-    async def discography(self, artist_id: str) -> list[dict]:
+    async def discography(self, artist_id: str, limit: int = MAX_DISCOGRAPHY) -> list[dict]:
         async def build() -> list[dict]:
             out: list[dict] = []
             seen: set[str] = set()
             url: Optional[str] = f"/artists/{artist_id}/albums"
             params: Optional[dict] = {"include_groups": "album,single", "limit": PAGE}
-            while url and len(out) < MAX_DISCOGRAPHY:
+            while url and len(out) < limit:
                 resp = await self.get(url, params)
                 for a in resp.get("items") or []:
                     if a and a["id"] not in seen:
@@ -179,7 +179,7 @@ class SpotifyClient:
                 url, params = resp.get("next"), None
             return out
 
-        return await self.cached(f"disco:{artist_id}", build)
+        return await self.cached(f"disco:{artist_id}:{limit}", build)
 
     @staticmethod
     def _album(a: dict) -> dict:

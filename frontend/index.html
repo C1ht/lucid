@@ -245,6 +245,16 @@
         </div>
 
         <div class="panel">
+          <div class="panel-header"><h2>Library check</h2></div>
+          <p class="panel-note">Goes through everything already downloaded and checks each album against Spotify (needs the Spotify settings above, saved first). Albums that Spotify doesn't list for their artist are shown in a list where you choose what to delete. Nothing is deleted until you confirm. Compilations and untagged files are skipped.</p>
+          <div class="panel-actions">
+            <button type="button" class="btn btn-outline" id="lib-start">Check library</button>
+            <button type="button" class="btn btn-outline" id="lib-review" hidden>Review last results</button>
+            <span id="lib-status" class="test-result"></span>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-header">
             <h2>Conversion</h2>
             <label class="switch"><input type="checkbox" id="conv-enabled"><span class="slider"></span></label>
@@ -297,6 +307,20 @@
     <button type="button" class="btn btn-danger" id="confirm-ok">Delete</button>
   </div>
 </dialog>
+<dialog id="lib-dialog" class="dialog dialog-lib">
+  <h2>Not found on Spotify</h2>
+  <p id="lib-summary" class="dialog-sub"></p>
+  <div class="lib-bar">
+    <button type="button" class="link-btn" id="lib-all">Select all</button>
+    <button type="button" class="link-btn" id="lib-none">Select none</button>
+  </div>
+  <div id="lib-list" class="lib-list"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn btn-outline" id="lib-close">Close</button>
+    <button type="button" class="btn btn-danger" id="lib-del-sel" disabled>Delete selected</button>
+    <button type="button" class="btn btn-danger" id="lib-del-all">Delete all</button>
+  </div>
+</dialog>
 <dialog id="tags-dialog" class="dialog dialog-tags">
   <form id="tags-form" autocomplete="off">
     <h2>Custom tags</h2>
@@ -335,6 +359,7 @@
 <script src="/app.js"></script>
 <script src="/browse.js"></script>
 <script src="/tags.js"></script>
+<script src="/libcheck.js"></script>
 <script src="/monitor.js"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config_store, navidrome, paths, spotify, youtube
+from . import config_store, libcheck, navidrome, paths, spotify, youtube
 from .monitor import monitor
 from .browse import BrowseError, browser
 from .jobs import manager
@@ -245,6 +245,31 @@ class MonitorScheduleRequest(BaseModel):
     time: str
 
 
+class LibraryDeleteRequest(BaseModel):
+    paths: Optional[list[str]] = None  # None: everything the last check reported
+
+
+@app.post("/api/library-check", dependencies=[Depends(require_auth)])
+async def library_check_start() -> dict:
+    try:
+        return libcheck.start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/library-check", dependencies=[Depends(require_auth)])
+async def library_check_state() -> dict:
+    return libcheck.state.public()
+
+
+@app.post("/api/library-check/delete", dependencies=[Depends(require_auth)])
+async def library_check_delete(req: LibraryDeleteRequest) -> dict:
+    try:
+        return await libcheck.delete(req.paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/monitor", dependencies=[Depends(require_auth)])
 async def get_monitor() -> dict:
     return monitor.state()
@@ -363,3 +388,4 @@ app.get("/app.js", dependencies=[Depends(require_auth)])(_serve("app.js", "appli
 app.get("/monitor.js", dependencies=[Depends(require_auth)])(_serve("monitor.js", "application/javascript"))
 app.get("/browse.js", dependencies=[Depends(require_auth)])(_serve("browse.js", "application/javascript"))
 app.get("/tags.js", dependencies=[Depends(require_auth)])(_serve("tags.js", "application/javascript"))
+app.get("/libcheck.js", dependencies=[Depends(require_auth)])(_serve("libcheck.js", "application/javascript"))

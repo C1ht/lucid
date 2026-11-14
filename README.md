@@ -15,7 +15,7 @@ It ships two ways from one codebase:
 - **Safe moves into your library.** Each job downloads into its own staging folder and is moved in only when finished (via a `.part` rename, so Navidrome never indexes half a file). A lower-quality file never overwrites a higher-quality one.
 - **Navidrome rescan on completion** through the Subsonic API.
 - **Sources:** Qobuz, Tidal, Deezer, SoundCloud, plus last.fm playlists. Browsing is Qobuz-only; the other sources work by pasting a link. YouTube (optional, via yt-dlp) also shows up in Search. Its audio is lossy and is saved as YouTube serves it (Opus or AAC), never converted to FLAC. If YouTube asks you to sign in, paste a cookies.txt under Settings > YouTube.
-- **Spotify search (optional):** with a free Spotify developer app (client ID and secret under Settings > Spotify), searches ask Spotify what an artist really released and look only those releases up on Qobuz, hiding wrong-artist uploads. Search only, nothing is downloaded from Spotify. There is a Spotify switch next to the search box for turning it off per search.
+- **Spotify search (optional):** with a free Spotify developer app (client ID and secret under Settings > Spotify), searches ask Spotify what an artist really released and look only those releases up on Qobuz, hiding wrong-artist uploads. Search only, nothing is downloaded from Spotify. There is a Spotify switch next to the search box for turning it off per search. Settings > Library check scans what you've already downloaded, lists albums Spotify doesn't list for their artist, and lets you delete selected tracks or all of them.
 - **Desktop extras:** native folder picker for the download location.
 
 ## Quick start (container)
