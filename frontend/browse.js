@@ -598,7 +598,7 @@
     const items = artistGroups(d)[state.artistFilter] || [];
     const warn =
       state.artistFilter === "unverified"
-        ? `<p class="spotify-note">Only MusicBrainz lists these; Deezer doesn't. That's where mistaken and AI-generated uploads usually show up, so they're kept out of the main list. Download at your own risk.</p>`
+        ? `<p class="spotify-note">Only MusicBrainz lists these recent releases; Deezer doesn't. That's where mistaken and AI-generated uploads usually show up, so they're kept out of the main list. Download at your own risk.</p>`
         : "";
     qs("artist-grid").innerHTML = items.length
       ? `${warn}<div class="grid">${items.map((a) => albumCard(a, { artistPage: true })).join("")}</div>`

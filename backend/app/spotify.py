@@ -719,12 +719,22 @@ async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
     return best
 
 
+AI_ERA_YEAR = 2023  # the flood of generated uploads started around here
+
+
+def _pre_ai(album: dict) -> bool:
+    """Releases from before the AI-upload era (or with no date) aren't doubted just because
+    Deezer lacks them: small labels' older catalogue often isn't there."""
+    year = (album.get("year") or "")[:4]
+    return not year.isdigit() or int(year) < AI_ERA_YEAR
+
+
 async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[dict]:
     """The catalogue's releases for an artist, cross-checked and extended with Deezer's.
 
-    MusicBrainz is open to anyone, and AI-generated uploads do end up in it, so a release only
-    MusicBrainz lists (not Deezer, and not vouched for by Last.fm listening) is marked
-    `verified: False`. Releases only Deezer lists are added; Deezer alone is trusted because its
+    MusicBrainz is open to anyone, and AI-generated uploads do end up in it, so a recent
+    (2023 or later) release only MusicBrainz lists (not Deezer, and not vouched for by Last.fm
+    listening) is marked `verified: False`. Releases only Deezer lists are added; Deezer alone is trusted because its
     artist was matched on overlapping albums."""
     base = [dict(a) for a in await _client_for(item_id).discography(raw(item_id), limit)]
     if item_id.startswith("mb:") and config_store.load_settings().catalog.include_deezer:
@@ -737,7 +747,7 @@ async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[d
             plays = await lastfm.top_albums(raw(item_id))
             trusted = [a["title"] for a in dz] + [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
             for a in base:
-                a["verified"] = any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted)
+                a["verified"] = _pre_ai(a) or any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted)
             base += [a for a in dz if not any(sim(a["title"], b["title"]) >= MATCH_THRESHOLD for b in base)]
     return base
 
