@@ -38,6 +38,7 @@ function initNav() {
   });
   qs("brand").addEventListener("click", () => {
     document.querySelector('.nav-item[data-view="search"]').click();
+    if (window.resetSearch) window.resetSearch(); // the logo also clears whatever was searched
     document.querySelector(".content").scrollTop = 0;
   });
 }

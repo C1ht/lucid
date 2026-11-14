@@ -953,6 +953,12 @@
         runSearch(input.value);
       }
     });
+    window.resetSearch = () => {
+      input.value = "";
+      clear.hidden = true;
+      clearTimeout(timer);
+      runSearch("");
+    };
     clear.addEventListener("click", () => {
       input.value = "";
       clear.hidden = true;
