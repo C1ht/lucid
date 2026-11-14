@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import httpx
 
-from . import lastfm
+from . import deezer, lastfm
 from .catalog_base import CatalogError, norm, sim
 
 API = "https://musicbrainz.org/ws/2"
@@ -94,7 +94,18 @@ class MusicBrainz:
     # ---- normalising ----
 
     @staticmethod
-    def _rg(rg: dict) -> dict:
+    def _is_feature(credit: list[dict], artist_id: Optional[str]) -> bool:
+        """True when this artist only guest-appears ("A & B feat. THEM") rather than owning the release."""
+        guest = False
+        for c in credit or []:
+            if (c.get("artist") or {}).get("id") == artist_id:
+                return guest
+            if re.search(r"\b(feat|ft|featuring|with|presents)\b", c.get("joinphrase") or "", re.I):
+                guest = True
+        return False
+
+    @classmethod
+    def _rg(cls, rg: dict, for_artist: Optional[str] = None) -> dict:
         names, ids = _names(rg.get("artist-credit"))
         date = rg.get("first-release-date") or ""
         return {
@@ -111,6 +122,7 @@ class MusicBrainz:
             "group": KINDS.get(rg.get("primary-type") or "", "album"),
             "label": None,
             "copyright": "",
+            "primary": not cls._is_feature(rg.get("artist-credit") or [], for_artist),
         }
 
     @staticmethod
@@ -175,7 +187,7 @@ class MusicBrainz:
         offset = 0
         while len(out) < limit:
             d = await self.get("/release-group", {"artist": artist_id, "inc": "artist-credits", "limit": 100, "offset": offset})
-            out += [self._rg(r) for r in d.get("release-groups") or [] if r.get("primary-type") in KINDS]
+            out += [self._rg(r, artist_id) for r in d.get("release-groups") or [] if r.get("primary-type") in KINDS]
             offset += 100
             if offset >= d.get("release-group-count", 0):
                 break
@@ -200,7 +212,9 @@ class MusicBrainz:
             meta["bio"] = bio
         if not meta["image"]:
             titles = [d["title"] for d in await self.discography(artist_id)]
-            meta["image"] = await _deezer_photo(meta["name"], titles)
+            dz = await deezer.client.find_artist(meta["name"], titles)
+            pic = (dz or {}).get("picture_big") or (dz or {}).get("picture_medium")
+            meta["image"] = pic if pic and "/images/artist//" not in pic else None
         return meta
 
     async def album(self, album_id: str) -> dict:
@@ -279,23 +293,6 @@ async def _wikipedia(relations: list[dict]) -> Optional[dict]:
         return {"extract": d.get("extract") or "", "image": (d.get("thumbnail") or {}).get("source")}
     except (httpx.HTTPError, ValueError, KeyError):
         return None
-
-
-async def _deezer_photo(name: str, titles: list[str]) -> Optional[str]:
-    """Deezer's photo, but only for the Deezer artist whose albums overlap this discography."""
-    if not titles:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            found = (await http.get("https://api.deezer.com/search/artist", params={"q": name, "limit": 5})).json().get("data") or []
-            for cand in [c for c in found if sim(c.get("name", ""), name) >= 0.9][:3]:
-                albums = (await http.get(f"https://api.deezer.com/artist/{cand['id']}/albums", params={"limit": 100})).json().get("data") or []
-                if any(sim(a.get("title", ""), t) >= 0.86 for a in albums for t in titles):
-                    pic = cand.get("picture_big") or cand.get("picture_medium")
-                    return pic if pic and "/images/artist//" not in pic else None
-    except (httpx.HTTPError, ValueError, KeyError):
-        pass
-    return None
 
 
 client = MusicBrainz()

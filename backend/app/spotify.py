@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 import httpx
 
-from . import config_store, lastfm, musicbrainz
+from . import config_store, deezer, lastfm, musicbrainz
 from .browse import BrowseError, browser
 from .catalog_base import MATCH_THRESHOLD, CatalogError, norm, sim
 
@@ -306,7 +306,7 @@ async def _resolve_track(sp: dict) -> Optional[dict]:
     return best
 
 
-PREFIXES = ("sp:", "mb:")  # which catalogue an id came from
+PREFIXES = ("sp:", "mb:", "dz:")  # which catalogue an id came from
 
 
 def is_sp(item_id: str) -> bool:
@@ -319,11 +319,13 @@ def raw(item_id: str) -> str:
 
 
 def _client_for(item_id: str):
+    if item_id.startswith("dz:"):
+        return deezer.client
     return musicbrainz.client if item_id.startswith("mb:") else client
 
 
 def name_of(c) -> str:
-    return "Spotify" if c is client else "MusicBrainz"
+    return "Spotify" if c is client else "Deezer" if c is deezer.client else "MusicBrainz"
 
 
 def _spotify_ok() -> bool:
@@ -384,7 +386,8 @@ def album_card(a: dict) -> dict:
         "explicit": False,
         "quality": None,
         "kind": _kind(a["group"], a["tracks"]),
-        "primary": True,
+        "primary": a.get("primary", True),  # False: only a guest feature ("appears on")
+        "via": a.get("via"),
     }
 
 
@@ -425,7 +428,7 @@ async def search(query: str) -> dict:
     lead = sp["lead"] if "lead" in sp else (artists[0] if artists and sim(artists[0]["name"], query) >= 0.8 else None)
     albums = list(sp["albums"])
     if lead:
-        albums = await c.discography(lead["id"])
+        albums = await full_discography(lead["p"] + lead["id"], 60)
     return {
         "query": query,
         "albums": _dedupe([album_card(a) for a in albums]),
@@ -463,7 +466,7 @@ async def _lastfm_extras(item_id: str, name: str, disco: list[dict]) -> list[dic
 async def artist_page(item_id: str) -> dict:
     c = _client_for(item_id)
     meta = await _artist_meta(item_id)
-    disco = await c.discography(raw(item_id), DISCOGRAPHY_ALL)
+    disco = await full_discography(item_id)
     cards = [album_card(a) for a in disco] + await _lastfm_extras(item_id, meta["name"], disco)
     return {
         "id": item_id,
@@ -715,8 +718,19 @@ async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
     return best
 
 
-async def discography_for(item_id: str, limit: int) -> list[dict]:
-    return await _client_for(item_id).discography(raw(item_id), limit)
+async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[dict]:
+    """The catalogue's releases for an artist, plus (MusicBrainz only) the ones Deezer adds."""
+    base = await _client_for(item_id).discography(raw(item_id), limit)
+    if item_id.startswith("mb:") and config_store.load_settings().catalog.include_deezer:
+        try:
+            name = (await _artist_meta(item_id))["name"]
+            base = base + await deezer.client.extras(name, base)
+        except CatalogError:
+            pass  # Deezer is a bonus; never fail the page over it
+    return base
+
+
+discography_for = full_discography
 
 
 # ---------- filtering a Qobuz artist page ----------
@@ -733,7 +747,7 @@ async def filter_artist(page: dict, artist_id: Optional[str]) -> dict:
     if not artist_id:
         return {**page, "bio": "", "spotify": {"id": None, "hidden": 0}}
     c = _client_for(artist_id)
-    titles = [d["title"] for d in await c.discography(raw(artist_id))]
+    titles = [d["title"] for d in await full_discography(artist_id, 300)]
     plays = await lastfm.top_albums(raw(artist_id)) if artist_id.startswith("mb:") else {}
     vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
     kept, hidden = [], 0

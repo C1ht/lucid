@@ -42,6 +42,7 @@ class CatalogSettings(BaseModel):
     enabled: bool = True
     provider: Literal["auto", "musicbrainz", "spotify"] = "auto"  # auto: Spotify if set up, else MusicBrainz
     lastfm_key: str = ""  # optional: fills gaps in MusicBrainz and gives artist bios
+    include_deezer: bool = True  # add releases Deezer lists for the verified artist (MusicBrainz misses many singles)
 
 
 class SpotifySettings(BaseModel):

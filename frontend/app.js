@@ -284,6 +284,7 @@ async function loadSettings() {
   qs("spotify-client-secret").placeholder = s.spotify.client_secret_set ? "(saved, paste to replace)" : "";
   qs("catalog-enabled").checked = s.catalog.enabled;
   qs("catalog-provider").value = s.catalog.provider;
+  qs("catalog-deezer").checked = s.catalog.include_deezer;
   qs("catalog-lastfm").placeholder = s.catalog.lastfm_key_set ? "(saved, paste to replace)" : "";
   // Browsing via a catalogue works out of the box (MusicBrainz) unless Spotify is the only source.
   const spotifySetUp = !!(s.spotify.enabled && s.spotify.client_id && s.spotify.client_secret_set);
@@ -354,6 +355,7 @@ function collectSettings() {
     catalog: {
       enabled: qs("catalog-enabled").checked,
       provider: qs("catalog-provider").value,
+      include_deezer: qs("catalog-deezer").checked,
       lastfm_key: qs("catalog-lastfm").value.trim(),
     },
     spotify: {

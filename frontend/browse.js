@@ -190,6 +190,7 @@
     const sub = opts.artistPage
       ? [a.year, a.tracks_count ? plural(a.tracks_count, "track") : ""].filter(Boolean).join(" · ")
       : [a.artist, a.year].filter(Boolean).join(" · ");
+    const subVia = a.via ? `${sub} · via ${a.via}` : sub;
     const kindTag = opts.artistPage && a.kind && a.kind !== "album" ? `<span class="kind-tag">${a.kind === "ep" ? "EP" : "Single"}</span>` : "";
     const sel = state.selecting ? `<span class="sel ${selected ? "on" : ""}">${selected ? ICON.check : ""}</span>` : "";
     const quick = state.selecting ? "" : dlButton("album", a.id, labelAlbum(a), "quick-dl");
@@ -197,7 +198,7 @@
       <div class="card ${selected ? "selected" : ""}" data-open="album:${attr(a.id)}" role="link" tabindex="0">
         <div class="cover-wrap">${cover(a.cover)}${kindTag}${sel}${quick}</div>
         <div class="card-title" title="${attr(a.title)}">${esc(a.title)}${explicitBadge(a.explicit)}</div>
-        <div class="card-sub">${esc(sub)}</div>
+        <div class="card-sub">${esc(subVia)}</div>
         ${srcSlot("album", a.id)}
       </div>`;
   }
