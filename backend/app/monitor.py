@@ -157,6 +157,13 @@ class Monitor:
             self.last_run_date = _now().date().isoformat()
             self._save()
 
+    async def check_one(self, artist_id: str) -> dict:
+        """Check a single monitored artist right now (the per-artist "Check now")."""
+        if artist_id not in self.artists:
+            raise KeyError(artist_id)
+        await self._sync_one(artist_id)
+        return self.state()
+
     async def _sync_one(self, artist_id: str) -> None:
         async with self._lock:
             entry = self.artists.get(artist_id)

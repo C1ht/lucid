@@ -768,6 +768,40 @@ def _pre_ai(album: dict) -> bool:
     return not year.isdigit() or int(year) < AI_ERA_YEAR
 
 
+_PSEUDO_ISRC_COUNTRY = ("Q", "TC", "GX", "CB", "BX", "FX")  # distributor-issued, not a real country
+
+
+async def verify_deezer(dz: list[dict], trusted_titles: list[str], judge: Optional[list[str]] = None) -> list[dict]:
+    """Mark which of a Deezer artist's releases really are this artist's.
+
+    A Deezer artist page can merge several people who share a name (the Danish rapper RH
+    sits among a dozen others). Releases MusicBrainz confirms (`trusted_titles`) are the
+    anchors; their ISRCs (country + rights holder) say who releases this artist's music, and
+    a release is kept when its ISRC fits: same rights holder, or the same real country.
+    Releases whose ISRC can't be read are kept; they're never doubted without evidence.
+    With `judge` (titles), only those releases are looked up and marked, which is much
+    cheaper when only a few are in question."""
+    for a in dz:
+        a["verified"] = True
+    if not dz or not trusted_titles:
+        return dz
+    is_anchor = {a["id"]: any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted_titles) for a in dz}
+    if judge is None:
+        todo = dz[:250]
+    else:
+        wanted = [a for a in dz if not is_anchor[a["id"]] and any(sim(a["title"], t) >= MATCH_THRESHOLD for t in judge)]
+        todo = [a for a in dz if is_anchor[a["id"]]][:12] + wanted
+    codes = dict(zip([a["id"] for a in todo], await asyncio.gather(*[deezer.client.isrc(a["id"]) for a in todo])))
+    holders = {c[:5] for i, c in codes.items() if c and is_anchor[i]}
+    countries = {h[:2] for h in holders if not h.startswith(_PSEUDO_ISRC_COUNTRY)}
+    if not holders:
+        return dz
+    for a in todo:
+        c = codes[a["id"]]
+        a["verified"] = bool(is_anchor[a["id"]] or not c or c[:5] in holders or c[:2] in countries)
+    return dz
+
+
 async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[dict]:
     """The catalogue's releases for an artist, cross-checked and extended with Deezer's.
 
@@ -787,7 +821,8 @@ async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[d
             dz = None
         if dz is not None:
             plays = await lastfm.top_albums(raw(item_id))
-            trusted = [a["title"] for a in dz] + [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
+            await verify_deezer(dz, [a["title"] for a in base])
+            trusted = [a["title"] for a in dz if a["verified"]] + [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
             for a in base:
                 a["verified"] = _pre_ai(a) or any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted)
             base += [a for a in dz if not any(sim(a["title"], b["title"]) >= MATCH_THRESHOLD for b in base)]
@@ -824,28 +859,42 @@ async def library_match(name: str, albums: list[str], years: Optional[list[str]]
             mark([d["title"] for d in await full_discography(sid, 300) if d.get("verified", True)])
     else:
         dz = None
+        mbm = None  # (MusicBrainz artist, its discography), fetched at most once
+
+        async def mb_match(titles: list[str]):
+            named = [a for a in await musicbrainz.client.artist_candidates(name) if sim(a["name"], name) >= 0.9][:3]
+            best, best_score = None, 0
+            for cand in named:
+                disco = await musicbrainz.client.discography(cand["id"], 100)
+                score = sum(1 for a in titles if any(sim(a, d["title"]) >= MATCH_THRESHOLD for d in disco))
+                if score > best_score:
+                    best, best_score = (cand, disco), score
+                if best_score * 2 >= len(titles):
+                    break  # clearly the right one; every extra candidate costs a second
+            return best
+
         if config_store.load_settings().catalog.include_deezer:
             dz = await deezer.client.find_artist(name, albums, strict=True)
             if dz:
                 known = True
-                mark([a["title"] for a in await deezer.client.discography(str(dz["id"]), 300, dz)])
+                listed = await deezer.client.discography(str(dz["id"]), 300, dz)
+                if len(listed) > 60:
+                    # A big Deezer page is often several same-name artists merged (or label slop).
+                    # Check its releases' ISRCs against MusicBrainz, as the artist page does.
+                    mbm = await mb_match([a["title"] for a in listed])
+                    if mbm:
+                        await verify_deezer(listed, [d["title"] for d in mbm[1]], albums)
+                mark([a["title"] for a in listed if a.get("verified", True)])
+
         def rescuable(i: int) -> bool:
             y = ((years or [""] * len(albums))[i] or "")[:4]
             return dz is None or not y.isdigit() or int(y) < AI_ERA_YEAR
 
         if any(not matched[i] and rescuable(i) for i in range(len(albums))):  # MusicBrainz, then Last.fm
-            named = [a for a in await musicbrainz.client.artist_candidates(name) if sim(a["name"], name) >= 0.9][:3]
-            best, best_score = None, 0
-            for cand in named:
-                disco = await musicbrainz.client.discography(cand["id"], 100)
-                score = sum(1 for a in albums if any(sim(a, d["title"]) >= MATCH_THRESHOLD for d in disco))
-                if score > best_score:
-                    best, best_score = (cand, disco), score
-                if best_score * 2 >= len(albums):
-                    break  # clearly the right one; every extra candidate costs a second
-            if best:
+            mbm = mbm or await mb_match(albums)
+            if mbm:
                 known = True
-                cand, disco = best
+                cand, disco = mbm
                 plays = await lastfm.top_albums(cand["id"])
                 vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
                 mark([d["title"] for d in disco if dz is None or _pre_ai(d)] + vouched)

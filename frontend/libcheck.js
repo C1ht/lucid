@@ -8,6 +8,7 @@
   const sel = new Set();
   let items = [];
   let timer = null;
+  let fresh = false; // a check the user just started: open the review dialog when it ends
 
   const status = (text, cls = "") => {
     const el = qs("lib-status");
@@ -88,25 +89,70 @@
     }
     if (s.status === "done") {
       const st = s.stats;
+      const who = s.scope ? ` for ${s.scope}` : "";
       qs("lib-review").hidden = !s.items.length;
-      status(`${st.matched} of ${st.albums} albums match, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}${st.unchecked ? ` ${plural(st.unchecked, "artist")} couldn't be checked (a source was unreachable), so none of their albums are listed. Run it again.` : ""}`, st.unmatched ? "" : "ok");
-      if (s.items.length && qs("lib-start").dataset.fresh) open(s.items);
+      if (s.scope && !st.albums) {
+        status(`No downloaded albums found${who}.`);
+        if (fresh) showToast(`No downloaded albums found${who}.`);
+        fresh = false;
+        return;
+      }
+      status(`${st.matched} of ${st.albums} albums match${who}, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}${st.unchecked ? ` ${plural(st.unchecked, "artist")} couldn't be checked (a source was unreachable), so none of their albums are listed. Run it again.` : ""}`, st.unmatched ? "" : "ok");
+      if (s.items.length && fresh) open(s.items);
       else items = s.items;
-      delete qs("lib-start").dataset.fresh;
+      if (fresh && !s.items.length && !st.unchecked) showToast(`Everything downloaded${who} matches the catalogue.`, "ok");
+      fresh = false;
     }
   }
 
-  qs("lib-start").addEventListener("click", async () => {
+  async function begin(artist) {
     try {
-      qs("lib-start").dataset.fresh = "1";
+      fresh = true;
       status("Starting…");
-      await api("/api/library-check", { method: "POST" });
+      await api("/api/library-check", { method: "POST", body: JSON.stringify({ artist: artist || null }) });
       poll();
     } catch (err) {
-      delete qs("lib-start").dataset.fresh;
+      fresh = false;
       status(err.message, "bad");
+      showToast(err.message, "bad");
     }
-  });
+  }
+  qs("lib-start").addEventListener("click", () => begin());
+
+  // Used by the Monitor and artist pages.
+  window.libTools = {
+    check: (artist) => {
+      showToast(`Checking ${artist} against the catalogue…`);
+      return begin(artist);
+    },
+    async deleteArtist(name) {
+      let sum;
+      try {
+        sum = await api(`/api/library/artist?name=${encodeURIComponent(name)}`);
+      } catch (err) {
+        showToast(err.message, "bad");
+        return false;
+      }
+      if (!sum.files) {
+        showToast(`No downloaded songs by ${name} found.`);
+        return false;
+      }
+      const ok = await askConfirm({
+        title: `Delete all songs by ${name}?`,
+        message: `${plural(sum.files, "file")} in ${plural(sum.albums, "album")} will be permanently deleted from disk. This can't be undone, but you can download them again later.`,
+        confirmLabel: "Delete all",
+      });
+      if (!ok) return false;
+      try {
+        const r = await api("/api/library/artist/delete", { method: "POST", body: JSON.stringify({ name }) });
+        showToast(`Deleted ${plural(r.deleted, "file")} by ${name}`, "ok");
+        return true;
+      } catch (err) {
+        showToast(err.message, "bad");
+        return false;
+      }
+    },
+  };
   qs("lib-review").addEventListener("click", async () => {
     try {
       await refresh();

@@ -25,7 +25,12 @@
         return `<div class="mon-row">
           <div class="mon-info"><div class="mon-name">${esc(a.name)}</div><div class="mon-status">${status}</div></div>
           ${sp}
-          <button type="button" class="btn btn-outline btn-small" data-remove="${esc(a.id)}">Remove</button>
+          <div class="mon-actions">
+            <button type="button" class="btn btn-outline btn-small" data-act="check" data-id="${esc(a.id)}">Check now</button>
+            <button type="button" class="btn btn-outline btn-small" data-act="libcheck" data-name="${esc(a.name)}" title="Compare the songs you've downloaded by this artist with the catalogue, like Settings > Library check">Check library</button>
+            <button type="button" class="btn btn-outline btn-small" data-act="wipe" data-name="${esc(a.name)}" title="Delete every downloaded song by this artist">Delete songs</button>
+            <button type="button" class="btn btn-outline btn-small" data-remove="${esc(a.id)}">Remove</button>
+          </div>
         </div>`;
       })
       .join("");
@@ -71,7 +76,27 @@
       .catch((err) => showToast(err.message, "bad"));
   });
 
-  qs("mon-list").addEventListener("click", (e) => {
+  qs("mon-list").addEventListener("click", async (e) => {
+    const act = e.target.closest("[data-act]");
+    if (act) {
+      const { act: what, id, name } = act.dataset;
+      if (what === "check") {
+        act.disabled = true;
+        act.textContent = "Checking…";
+        try {
+          render(await api(`/api/monitor/artists/${encodeURIComponent(id)}/check`, { method: "POST" }));
+          showToast("Checked. Any new releases are in the Queue.", "ok");
+        } catch (err) {
+          showToast(err.message, "bad");
+          load();
+        }
+      } else if (what === "libcheck") {
+        window.libTools.check(name);
+      } else if (what === "wipe") {
+        window.libTools.deleteArtist(name);
+      }
+      return;
+    }
     const btn = e.target.closest("[data-remove]");
     if (!btn) return;
     api(`/api/monitor/artists/${encodeURIComponent(btn.dataset.remove)}`, { method: "DELETE" })

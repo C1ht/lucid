@@ -348,10 +348,18 @@ class LibraryDeleteRequest(BaseModel):
     paths: Optional[list[str]] = None  # None: everything the last check reported
 
 
+class LibraryCheckRequest(BaseModel):
+    artist: Optional[str] = None  # only check this artist's albums
+
+
+class LibraryArtistRequest(BaseModel):
+    name: str
+
+
 @app.post("/api/library-check", dependencies=[Depends(require_auth)])
-async def library_check_start() -> dict:
+async def library_check_start(req: Optional[LibraryCheckRequest] = None) -> dict:
     try:
-        return libcheck.start()
+        return libcheck.start(req.artist if req else None)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -365,6 +373,19 @@ async def library_check_state() -> dict:
 async def library_check_delete(req: LibraryDeleteRequest) -> dict:
     try:
         return await libcheck.delete(req.paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/library/artist", dependencies=[Depends(require_auth)])
+async def library_artist_summary(name: str) -> dict:
+    return await libcheck.artist_summary(name)
+
+
+@app.post("/api/library/artist/delete", dependencies=[Depends(require_auth)])
+async def library_artist_delete(req: LibraryArtistRequest) -> dict:
+    try:
+        return await libcheck.delete_artist(req.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -403,6 +424,14 @@ async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
 @app.put("/api/monitor/artists/{artist_id}", dependencies=[Depends(require_auth)])
 async def update_monitored_artist(artist_id: str, req: MonitorSpotifyRequest) -> dict:
     return monitor.set_spotify(artist_id, req.spotify)
+
+
+@app.post("/api/monitor/artists/{artist_id}/check", dependencies=[Depends(require_auth)])
+async def check_monitored_artist(artist_id: str) -> dict:
+    try:
+        return await monitor.check_one(artist_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="That artist isn't monitored.") from exc
 
 
 @app.delete("/api/monitor/artists/{artist_id}", dependencies=[Depends(require_auth)])

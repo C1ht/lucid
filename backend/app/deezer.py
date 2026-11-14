@@ -33,6 +33,8 @@ class Deezer:
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, Any]] = {}
         self._gate = asyncio.Semaphore(4)  # Deezer allows ~50 requests per 5 s
+        self._pace = asyncio.Lock()
+        self._next = 0.0
 
     async def get(self, path: str, params: Optional[dict] = None) -> dict:
         ck = f"{path}?{sorted((params or {}).items())}"
@@ -40,6 +42,11 @@ class Deezer:
         if hit and time.monotonic() - hit[0] < CACHE_TTL:
             return hit[1]
         async with self._gate:
+            async with self._pace:  # start requests ~9/s apart so bulk lookups stay under the quota
+                wait = self._next - time.monotonic()
+                self._next = max(self._next, time.monotonic()) + 0.11
+            if wait > 0:
+                await asyncio.sleep(wait)
             try:
                 async with httpx.AsyncClient(timeout=20) as http:
                     r = await http.get(f"{API}{path}", params=params)
@@ -131,6 +138,19 @@ class Deezer:
 
     async def track(self, track_id: str) -> dict:
         return self._track(await self.get(f"/track/{track_id}"))
+
+    async def isrc(self, album_id: str) -> Optional[str]:
+        """The ISRC of an album's first track. The code starts with the country and the rights
+        holder, so it tells a label's own releases from a same-name artist's."""
+        for attempt in (0, 1):
+            try:
+                rows = (await self.get(f"/album/{album_id}/tracks", {"limit": 1})).get("data") or []
+                return (rows[0].get("isrc") or None) if rows else None
+            except CatalogError:
+                if attempt:
+                    return None
+                await asyncio.sleep(1.5)  # most likely the quota; try once more
+        return None
 
     async def discography(self, artist_id: str, limit: int = 300, artist: Optional[dict] = None) -> list[dict]:
         rows = await self._paged(f"/artist/{artist_id}/albums", limit)

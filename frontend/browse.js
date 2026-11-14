@@ -585,7 +585,8 @@
     const n = state.selection.size;
     const watching = !!monitorEntry(d);
     const monBtn = `<button type="button" class="btn btn-small ${watching ? "btn-accent" : "btn-outline"}" data-act="monitor-toggle">${watching ? "Monitoring" : "Monitor"}</button>`;
-    const actions = monBtn + (state.selecting
+    const wipeBtn = `<button type="button" class="btn btn-outline btn-small" data-act="wipe-artist" title="Delete every downloaded song by this artist">Delete songs</button>`;
+    const actions = monBtn + wipeBtn + (state.selecting
       ? `<button type="button" class="btn btn-outline btn-small" data-act="select-all">Select all</button>
          <button type="button" class="btn btn-accent btn-small btn-icon" data-act="dl-selected" ${n ? "" : "disabled"}>${ICON.download}Download ${n ? `(${n})` : "selected"}</button>
          <button type="button" class="btn btn-outline btn-small" data-act="select-toggle">Cancel</button>`
@@ -983,6 +984,8 @@
           })
           .catch((err) => showToast(err.message, "bad"));
       }
+      case "wipe-artist":
+        return window.libTools.deleteArtist(state.current.data.name);
       case "select-toggle":
         state.selecting = !state.selecting;
         state.selection.clear();
