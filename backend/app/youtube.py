@@ -46,7 +46,7 @@ def _common_args() -> list[str]:
     return args
 
 
-def _search_blocking(query: str) -> list[dict]:
+def _search_blocking(query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
     import yt_dlp
 
     opts: dict[str, Any] = {
@@ -60,7 +60,7 @@ def _search_blocking(query: str) -> list[dict]:
         opts["cookiefile"] = str(COOKIES_PATH)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch{SEARCH_LIMIT}:{query}", download=False)
+            info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
     except Exception as exc:  # noqa: BLE001 - yt-dlp raises many types
         raise YoutubeError(f"YouTube search failed: {exc}") from exc
 
@@ -82,12 +82,12 @@ def _search_blocking(query: str) -> list[dict]:
     return results
 
 
-async def search(query: str) -> list[dict]:
-    key = query.strip().lower()
+async def search(query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
+    key = f"{limit}:{query.strip().lower()}"
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_TTL_SECONDS:
         return hit[1]
-    results = await asyncio.to_thread(_search_blocking, query.strip())
+    results = await asyncio.to_thread(_search_blocking, query.strip(), limit)
     _cache[key] = (time.monotonic(), results)
     if len(_cache) > 100:
         for k, _ in sorted(_cache.items(), key=lambda kv: kv[1][0])[:30]:

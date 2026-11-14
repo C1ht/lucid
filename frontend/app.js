@@ -275,6 +275,7 @@ async function loadSettings() {
   qs("soundcloud-app-version").value = s.soundcloud.app_version;
 
   qs("youtube-enabled").checked = s.youtube.enabled;
+  qs("youtube-fallback").checked = s.youtube.fallback;
   qs("youtube-cookies").placeholder = s.youtube.cookies_set ? "(saved, paste to replace)" : "# Netscape HTTP Cookie File";
   window.youtubeEnabled = s.youtube.enabled;
 
@@ -342,6 +343,7 @@ function collectSettings() {
     },
     youtube: {
       enabled: qs("youtube-enabled").checked,
+      fallback: qs("youtube-fallback").checked,
       cookies: qs("youtube-cookies").value,
     },
     spotify: {

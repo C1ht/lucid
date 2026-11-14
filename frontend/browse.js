@@ -132,6 +132,56 @@
 
   /* ---------- result cards ---------- */
 
+  /* Where a Spotify result would be downloaded from. Filled in after rendering. */
+  const avail = new Map();
+  function srcBadge(src) {
+    if (!src) return "";
+    if (src.source === "qobuz") return `<span class="src src-qobuz" title="Downloaded from Qobuz">Qobuz · ${esc(src.quality || "lossless")}</span>`;
+    if (src.source === "youtube")
+      return `<span class="src src-youtube" title="Not on Qobuz. Downloaded from YouTube track by track (lossy), tagged from Spotify">YouTube · lossy</span>`;
+    return `<span class="src src-none" title="${src.unknown ? "Couldn't check" : "Not on Qobuz, and the YouTube fallback is off or disabled"}">${src.unknown ? "Unknown" : "Unavailable"}</span>`;
+  }
+  const srcSlot = (kind, id) =>
+    String(id).startsWith("sp:") ? `<div class="src-line" data-src="${kind}:${attr(id)}">${srcBadge(avail.get(kind + ":" + id))}</div>` : "";
+
+  let availTimer = null;
+  function fillAvailability() {
+    clearTimeout(availTimer);
+    availTimer = setTimeout(async () => {
+      const slots = [...body().querySelectorAll("[data-src]")];
+      const want = { albums: [], tracks: [] };
+      for (const el of slots) {
+        const key = el.dataset.src;
+        if (avail.has(key)) continue;
+        const [kind, ...rest] = key.split(":");
+        want[kind === "album" ? "albums" : "tracks"].push(rest.join(":"));
+      }
+      for (const list of [want.albums, want.tracks]) {
+        for (let i = 0; i < list.length; i += 40) {
+          const chunk = list.slice(i, i + 40);
+          try {
+            const r = await api("/api/browse/spotify/availability", {
+              method: "POST",
+              body: JSON.stringify(list === want.albums ? { albums: chunk } : { tracks: chunk }),
+            });
+            for (const [id, v] of Object.entries(r.albums)) avail.set("album:" + id, v);
+            for (const [id, v] of Object.entries(r.tracks)) avail.set("track:" + id, v);
+          } catch (_) {
+            return; // badges are a nicety; leave them blank
+          }
+          paintAvailability();
+        }
+      }
+      paintAvailability();
+    }, 150);
+  }
+  function paintAvailability() {
+    body().querySelectorAll("[data-src]").forEach((el) => {
+      const v = avail.get(el.dataset.src);
+      if (v && !el.innerHTML) el.innerHTML = srcBadge(v);
+    });
+  }
+
   function albumCard(a, opts = {}) {
     const selected = state.selection.has(a.id);
     const sub = opts.artistPage
@@ -145,6 +195,7 @@
         <div class="cover-wrap">${cover(a.cover)}${kindTag}${sel}${quick}</div>
         <div class="card-title" title="${attr(a.title)}">${esc(a.title)}${explicitBadge(a.explicit)}</div>
         <div class="card-sub">${esc(sub)}</div>
+        ${srcSlot("album", a.id)}
       </div>`;
   }
 
@@ -172,6 +223,7 @@
         <div class="row-main">
           <div class="row-line"><span class="row-title">${esc(t.title)}${explicitBadge(t.explicit)}</span>${playButton(t.id, labelTrack(t))}</div>
           <div class="row-sub">${esc(sub)}</div>
+          ${srcSlot("track", t.id)}
         </div>
         <span class="row-time">${esc(fmtDuration(t.duration))}</span>
         ${moreButton("q:" + t.id, qobuzTarget(t))}
@@ -353,17 +405,27 @@
           <h1 class="detail-title">${esc(d.title)}${explicitBadge(d.explicit)}</h1>
           <div class="detail-artist">${linkTo("artist", d.artist_id, d.artist)}</div>
           <div class="detail-meta">${meta}</div>
+          ${d.source ? `<div class="detail-src">${srcBadge(d.source)}</div>` : ""}
           <div class="detail-actions">
-            <button type="button" class="btn btn-accent btn-icon" data-dl="album:${attr(d.id)}" data-label="${attr(labelAlbum(d))}" ${d.on_qobuz === false ? "disabled" : ""}>${ICON.download}Download album</button>
+            <button type="button" class="btn btn-accent btn-icon" data-dl="album:${attr(d.id)}" data-label="${attr(labelAlbum(d))}" ${d.source && d.source.source === null ? "disabled" : ""}>${ICON.download}Download album</button>
           </div>
         </div>
       </div>
-      ${d.on_qobuz === false ? `<p class="spotify-note">This release wasn't found on Qobuz, so it can't be downloaded from here.</p>` : ""}
+      ${sourceNote(d.source, "album")}
       ${trackTable(d.tracks)}
       <div class="detail-foot">${[d.copyright, d.label && `Label: ${d.label}`, d.date && `Released ${d.date}`]
         .filter(Boolean)
         .map(esc)
         .join("<br>")}</div>`;
+  }
+
+  function sourceNote(src, what) {
+    if (!src) return "";
+    if (src.source === "youtube")
+      return `<p class="spotify-note">Qobuz doesn't have this ${what}. It will be downloaded from YouTube instead, one track at a time, as lossy audio (Opus or AAC) tagged with Spotify's details. Tracks with no good YouTube match are skipped.</p>`;
+    if (src.source === null)
+      return `<p class="spotify-note">This ${what} isn't on Qobuz, so it can't be downloaded. Turn on the YouTube fallback in Settings > YouTube to get it from there.</p>`;
+    return "";
   }
 
   function renderPlaylist(d) {
@@ -413,8 +475,10 @@
           <h1 class="detail-title">${esc(d.title)}${explicitBadge(d.explicit)}</h1>
           <div class="detail-artist">${linkTo("artist", d.artist_id, d.artist)}</div>
           <div class="kv-grid">${rows}</div>
+          ${d.source ? `<div class="detail-src">${srcBadge(d.source)}</div>` : ""}
+          ${sourceNote(d.source, "song")}
           <div class="detail-actions">
-            <button type="button" class="btn btn-accent btn-icon" data-dl="track:${attr(d.id)}" data-label="${attr(labelTrack(d))}">${ICON.download}Download</button>
+            <button type="button" class="btn btn-accent btn-icon" data-dl="track:${attr(d.id)}" data-label="${attr(labelTrack(d))}" ${d.source && d.source.source === null ? "disabled" : ""}>${ICON.download}Download</button>
             ${playButton(d.id, labelTrack(d), "btn btn-outline btn-icon pv-btn pv-solid")}
             ${d.album_id ? `<button type="button" class="btn btn-outline" data-open="album:${attr(d.album_id)}">Open album</button>` : ""}
             ${moreButton("q:" + d.id, qobuzTarget({ ...d, cover: d.cover_large || d.cover }), "btn btn-outline btn-icon more-btn more-solid")}
@@ -799,7 +863,7 @@
     const override = qs("tagging-override").value;
     const navidrome_tagging = override === "" ? null : override === "true";
     const yt = kind === "yt";
-    await api("/api/download", {
+    return api("/api/download", {
       method: "POST",
       body: JSON.stringify({
         source: yt ? "youtube" : "qobuz",
@@ -818,8 +882,11 @@
     if (btn.dataset.busy) return;
     btn.dataset.busy = "1";
     try {
-      await queueDownload(kind, id, label);
-      showToast(`Queued: ${label}`, "ok");
+      const res = await queueDownload(kind, id, label);
+      if (res && res.via === "youtube") {
+        const miss = res.missing && res.missing.length ? `, ${res.missing.length} not found on YouTube` : "";
+        showToast(`Not on Qobuz. Queued ${plural(res.queued, "track")} from YouTube${miss}: ${label}`, "ok");
+      } else showToast(`Queued: ${label}`, "ok");
       const original = btn.innerHTML;
       btn.classList.add("done");
       if (btn.classList.contains("icon-btn") || btn.classList.contains("quick-dl")) btn.innerHTML = ICON.check;
@@ -948,6 +1015,7 @@
   function initBrowse() {
     const input = qs("search-query");
     window.syncSpotifyToggle();
+    new MutationObserver(fillAvailability).observe(body(), { childList: true, subtree: true });
     qs("spotify-toggle").addEventListener("click", () => {
       state.spotifyOn = !state.spotifyOn;
       persistSpotify();

@@ -140,6 +140,21 @@ async def _spotify_to_qobuz(media_type: str, item_id: str) -> str:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
+class AvailabilityRequest(BaseModel):
+    albums: list[str] = []
+    tracks: list[str] = []
+
+
+@app.post("/api/browse/spotify/availability", dependencies=[Depends(require_auth)])
+async def spotify_availability(req: AvailabilityRequest) -> dict:
+    """Where each Spotify album/track would be downloaded from (Qobuz, YouTube or nowhere)."""
+    if not spotify.available():
+        raise HTTPException(status_code=400, detail="Spotify is turned off or isn't set up.")
+    albums = [i for i in req.albums if spotify.is_sp(i)][:60]
+    tracks = [i for i in req.tracks if spotify.is_sp(i)][:60]
+    return await spotify.availability(albums, tracks)
+
+
 @app.get("/api/browse/album/{album_id}", dependencies=[Depends(require_auth)])
 async def browse_album(album_id: str) -> dict:
     if spotify.is_sp(album_id):
@@ -235,10 +250,62 @@ async def download_by_id(req: DownloadByIdRequest) -> dict:
         _require_youtube()
     label = req.desc or f"{req.source} {req.media_type} {req.id}"
     if spotify.is_sp(req.id):
-        # Spotify results are only a catalogue: the files come from Qobuz.
-        req = req.model_copy(update={"id": await _spotify_to_qobuz(req.media_type, req.id), "source": "qobuz"})
+        # Spotify results are only a catalogue: the files come from Qobuz, or from
+        # YouTube (tagged with Spotify's metadata) when Qobuz doesn't have them.
+        if req.media_type not in ("album", "track"):
+            raise HTTPException(status_code=400, detail="Only albums and songs can be downloaded from Spotify results.")
+        try:
+            src = await spotify.source_for(req.media_type, req.id)
+        except spotify.SpotifyError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except BrowseError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        if src["source"] == "youtube":
+            return await _queue_youtube_fallback(req, label)
+        if src["source"] is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Not available on Qobuz" + (", and the YouTube fallback is off." if config_store.load_settings().youtube.enabled else "."),
+            )
+        req = req.model_copy(update={"id": src["id"], "source": "qobuz"})
     job = manager.enqueue("id", label, req.model_dump())
     return job.model_dump()
+
+
+async def _queue_youtube_fallback(req: DownloadByIdRequest, label: str) -> dict:
+    """Qobuz doesn't have it: queue one YouTube download per track, each tagged from Spotify."""
+    try:
+        plan = await spotify.youtube_plan(req.media_type, req.id)
+    except spotify.SpotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not plan["items"]:
+        raise HTTPException(status_code=404, detail="Not on Qobuz, and no matching YouTube audio was found either.")
+    cover_id = None
+    if plan["cover_url"]:
+        try:
+            async with httpx.AsyncClient(timeout=20) as http:
+                res = await http.get(plan["cover_url"])
+            if res.status_code == 200 and len(res.content) <= COVER_MAX_BYTES:
+                cover_id = custom_tags.save_cover(res.content)
+        except (httpx.HTTPError, ValueError):
+            pass  # no cover is better than no download
+    jobs = []
+    for item in plan["items"]:
+        tags = {k: v for k, v in item["tags"].items() if v not in (None, "")}
+        if req.custom_tags:  # the user's own edits win over Spotify's tags
+            tags.update({k: v for k, v in req.custom_tags.model_dump().items() if v is not None})
+        if cover_id and "cover_id" not in tags:
+            tags["cover_id"] = cover_id
+        yt_req = DownloadByIdRequest(
+            source="youtube",
+            media_type="track",
+            id=item["video"]["id"],
+            desc=item["label"] if req.media_type == "album" else label,
+            navidrome_tagging=req.navidrome_tagging,
+            custom_tags=tags,
+        )
+        jobs.append(manager.enqueue("id", f"[YouTube] {yt_req.desc}", yt_req.model_dump()))
+    return {**jobs[0].model_dump(), "queued": len(jobs), "missing": plan["missing"], "via": "youtube"}
 
 
 @app.post("/api/download/url", dependencies=[Depends(require_auth)])

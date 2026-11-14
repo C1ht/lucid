@@ -45,6 +45,8 @@ class SpotifySettings(BaseModel):
 
 class YoutubeSettings(BaseModel):
     enabled: bool = False
+    # Spotify results that Qobuz doesn't have are downloaded from YouTube instead.
+    fallback: bool = True
     # Unused: streamrip has no YouTube client, so yt-dlp does the work and only saves audio.
     download_videos: bool = False
     # Netscape-format cookies.txt. YouTube often answers "confirm you're not a bot" to

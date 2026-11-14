@@ -443,18 +443,16 @@ async def album_page(item_id: str) -> dict:
             "tracks_count": a["tracks"] or len(tracks),
             "disc_count": max([t["disc"] for t in tracks] or [1]),
             "duration": int(sum(t["duration"] or 0 for t in tracks)) or None,
-            "on_qobuz": True,
         }
     )
-    try:
-        await qobuz_album_id(item_id)
-    except BrowseError:
-        card["on_qobuz"] = False
+    card["source"] = await source_for("album", item_id)
     return card
 
 
 async def track_page(item_id: str) -> dict:
-    return track_row(await client.track(raw(item_id)))
+    row = track_row(await client.track(raw(item_id)))
+    row["source"] = await source_for("track", item_id)
+    return row
 
 
 # ---------- turning "sp:" ids into Qobuz ids (download / preview time) ----------
@@ -472,24 +470,142 @@ def _recall(key: str) -> Optional[str]:
     return hit[1] if hit and time.monotonic() - hit[0] < 3600 else None
 
 
-async def qobuz_album_id(item_id: str) -> str:
-    if (hit := _recall(item_id)) is not None:
+_cards: dict[str, tuple[float, Optional[dict]]] = {}
+_UNSET = object()
+
+
+def _card_get(key: str):
+    hit = _cards.get(key)
+    return hit[1] if hit and time.monotonic() - hit[0] < 1800 else _UNSET
+
+
+async def qobuz_card(kind: str, item_id: str) -> Optional[dict]:
+    """The Qobuz album/track card matching this Spotify item, or None. Misses are cached too."""
+    key = f"{kind}:{item_id}"
+    hit = _card_get(key)
+    if hit is not _UNSET:
         return hit
-    a = await client.album(raw(item_id))
-    card = await _resolve_album(a)
+    if kind == "album":
+        card = await _resolve_album(await client.album(raw(item_id)))
+    else:
+        card = await _resolve_track(await client.track(raw(item_id)))
+    _cards[key] = (time.monotonic(), card)
+    return card
+
+
+async def qobuz_album_id(item_id: str) -> str:
+    card = await qobuz_card("album", item_id)
     if not card:
         raise BrowseError("This release isn't available on Qobuz.", 404)
-    return _remember(item_id, card["id"])
+    return card["id"]
 
 
 async def qobuz_track_id(item_id: str) -> str:
-    if (hit := _recall(item_id)) is not None:
-        return hit
-    t = await client.track(raw(item_id))
-    card = await _resolve_track(t)
+    card = await qobuz_card("track", item_id)
     if not card:
         raise BrowseError("This song isn't available on Qobuz.", 404)
-    return _remember(item_id, card["id"])
+    return card["id"]
+
+
+def youtube_fallback() -> bool:
+    y = config_store.load_settings().youtube
+    return bool(y.enabled and y.fallback)
+
+
+async def source_for(kind: str, item_id: str) -> dict:
+    """Where a download of this item would come from, and at what quality."""
+    card = await qobuz_card(kind, item_id)
+    if card:
+        return {"source": "qobuz", "id": card["id"], "quality": card.get("quality")}
+    if youtube_fallback():
+        return {"source": "youtube", "quality": "lossy"}
+    return {"source": None}
+
+
+async def availability(albums: list[str], tracks: list[str]) -> dict:
+    async def one(kind: str, item_id: str):
+        try:
+            return item_id, await source_for(kind, item_id)
+        except (SpotifyError, BrowseError):
+            return item_id, {"source": None, "unknown": True}
+
+    a = await asyncio.gather(*[one("album", i) for i in albums])
+    t = await asyncio.gather(*[one("track", i) for i in tracks])
+    return {"albums": dict(a), "tracks": dict(t)}
+
+
+# ---------- YouTube fallback ----------
+
+_BAD_WORDS = re.compile(r"\b(live|remix|cover|karaoke|instrumental|sped up|slowed|reverb|nightcore|8d|lyrics?)\b")
+
+
+def _score_video(v: dict, t: dict) -> float:
+    want = norm(t["title"])
+    title = norm(v["title"])
+    score = 0.0
+    if t["duration"] and v.get("duration"):
+        diff = abs(v["duration"] - t["duration"])
+        if diff > 15:
+            return 0.0
+        score += 0.5 if diff <= 4 else 0.2
+    score += 0.3 if want and want in title else 0.3 * sim(t["title"], v["title"])
+    channel = norm(v.get("channel"))
+    if (v.get("channel") or "").endswith(" - Topic"):
+        score += 0.3  # YouTube's auto-generated, label-supplied audio
+    elif any(norm(a) and norm(a) in channel for a in t["artists"]):
+        score += 0.15
+    if _BAD_WORDS.search(title) and not _BAD_WORDS.search(norm(t["title"])):
+        score -= 0.6
+    return score
+
+
+async def youtube_match(t: dict) -> Optional[dict]:
+    from . import youtube
+
+    try:
+        results = await youtube.search(f"{t['artists'][0] if t['artists'] else ''} {t['title']}".strip(), limit=8)
+    except youtube.YoutubeError:
+        return None
+    scored = sorted(((_score_video(v, t), v) for v in results), key=lambda x: x[0], reverse=True)
+    return scored[0][1] if scored and scored[0][0] >= 0.6 else None
+
+
+async def youtube_plan(kind: str, item_id: str) -> dict:
+    """One YouTube video per Spotify track, with the Spotify tags to apply to it."""
+    if kind == "album":
+        album = await client.album(raw(item_id))
+        tracks = album["track_list"]
+    else:
+        track = await client.track(raw(item_id))
+        album = await client.album(track["album_id"]) if track.get("album_id") else None
+        tracks = [track]
+    gate = asyncio.Semaphore(3)
+
+    async def find(t: dict):
+        async with gate:
+            return t, await youtube_match(t)
+
+    items, missing = [], []
+    for t, video in await asyncio.gather(*[find(t) for t in tracks]):
+        if not video:
+            missing.append(t["title"])
+            continue
+        tags = {
+            "title": t["title"],
+            "artist": ", ".join(t["artists"]),
+            "track_number": t["track_number"],
+        }
+        if album:
+            tags.update(
+                {
+                    "album": album["title"],
+                    "album_artist": ", ".join(album["artists"]),
+                    "year": album["year"],
+                    "genre": (album.get("genres") or [None])[0],
+                }
+            )
+        items.append({"video": video, "tags": tags, "label": f"{tags['artist']} - {t['title']}"})
+    return {"items": items, "missing": missing, "cover_url": (album or {}).get("cover_large")}
 
 
 async def qobuz_artist_id(item_id: str) -> Optional[str]:
