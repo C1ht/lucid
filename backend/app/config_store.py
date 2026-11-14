@@ -22,6 +22,7 @@ _SECRET_FIELDS = {
     ("soundcloud", "client_id"),
     ("youtube", "cookies"),
     ("spotify", "client_secret"),
+    ("catalog", "lastfm_key"),
     ("navidrome", "password"),
 }
 

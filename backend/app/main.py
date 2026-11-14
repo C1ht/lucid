@@ -107,8 +107,8 @@ async def browse_youtube(q: str) -> dict:
 
 @app.get("/api/browse/spotify", dependencies=[Depends(require_auth)])
 async def browse_spotify(q: str) -> dict:
-    if not config_store.load_settings().spotify.enabled:
-        raise HTTPException(status_code=400, detail="Spotify search is turned off. Enable it in Settings.")
+    if not spotify.available():
+        raise HTTPException(status_code=400, detail="The reference catalogue is off or isn't set up. Check Settings > Catalogue.")
     if len(q.strip()) < 2:
         raise HTTPException(status_code=400, detail="Type at least 2 characters")
     try:
@@ -121,7 +121,7 @@ async def browse_spotify(q: str) -> dict:
 
 async def _spotify_page(build, item_id: str) -> dict:
     if not spotify.available():
-        raise HTTPException(status_code=400, detail="Spotify is turned off or isn't set up. Check Settings.")
+        raise HTTPException(status_code=400, detail="The reference catalogue is off or isn't set up. Check Settings > Catalogue.")
     try:
         return await build(item_id)
     except spotify.SpotifyError as exc:
@@ -149,7 +149,7 @@ class AvailabilityRequest(BaseModel):
 async def spotify_availability(req: AvailabilityRequest) -> dict:
     """Where each Spotify album/track would be downloaded from (Qobuz, YouTube or nowhere)."""
     if not spotify.available():
-        raise HTTPException(status_code=400, detail="Spotify is turned off or isn't set up.")
+        raise HTTPException(status_code=400, detail="The reference catalogue is off or isn't set up.")
     albums = [i for i in req.albums if spotify.is_sp(i)][:60]
     tracks = [i for i in req.tracks if spotify.is_sp(i)][:60]
     return await spotify.availability(albums, tracks)
@@ -387,7 +387,7 @@ async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
     try:
         sp_id = None
         if spotify.is_sp(req.id):
-            sp_id, qid = spotify.raw(req.id), None
+            sp_id, qid = req.id, None
             try:
                 qid = await spotify.qobuz_artist_id(req.id)
             except spotify.SpotifyError as exc:

@@ -282,8 +282,13 @@ async function loadSettings() {
   qs("spotify-enabled").checked = s.spotify.enabled;
   qs("spotify-client-id").value = s.spotify.client_id;
   qs("spotify-client-secret").placeholder = s.spotify.client_secret_set ? "(saved, paste to replace)" : "";
-  window.spotifyConfigured = !!(s.spotify.client_id && s.spotify.client_secret_set);
-  window.spotifyEnabled = s.spotify.enabled;
+  qs("catalog-enabled").checked = s.catalog.enabled;
+  qs("catalog-provider").value = s.catalog.provider;
+  qs("catalog-lastfm").placeholder = s.catalog.lastfm_key_set ? "(saved, paste to replace)" : "";
+  // Browsing via a catalogue works out of the box (MusicBrainz) unless Spotify is the only source.
+  const spotifySetUp = !!(s.spotify.enabled && s.spotify.client_id && s.spotify.client_secret_set);
+  window.spotifyEnabled = s.catalog.enabled;
+  window.spotifyConfigured = s.catalog.provider !== "spotify" || spotifySetUp;
   if (window.syncSpotifyToggle) window.syncSpotifyToggle();
 
   qs("conv-enabled").checked = s.conversion.enabled;
@@ -345,6 +350,11 @@ function collectSettings() {
       enabled: qs("youtube-enabled").checked,
       fallback: qs("youtube-fallback").checked,
       cookies: qs("youtube-cookies").value,
+    },
+    catalog: {
+      enabled: qs("catalog-enabled").checked,
+      provider: qs("catalog-provider").value,
+      lastfm_key: qs("catalog-lastfm").value.trim(),
     },
     spotify: {
       enabled: qs("spotify-enabled").checked,
@@ -423,6 +433,7 @@ function initSettings() {
       window.youtubeEnabled = qs("youtube-enabled").checked;
       qs("youtube-cookies").value = "";
       qs("spotify-client-secret").value = "";
+      qs("catalog-lastfm").value = "";
       resultEl.textContent = "Saved";
       resultEl.className = "test-result ok";
       showToast("Settings saved", "ok");

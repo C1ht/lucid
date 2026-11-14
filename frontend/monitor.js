@@ -20,7 +20,7 @@
             ? `Last queued: ${esc(a.last_found.title)} (${fmt(a.last_found.at)})`
             : `Checked ${fmt(a.last_checked)}`;
         const sp = m.spotify_available
-          ? `<label class="mon-spotify" title="Only monitor releases that Spotify lists for this artist"><input type="checkbox" data-spotify="${esc(a.id)}" ${a.spotify ? "checked" : ""}>Spotify only</label>`
+          ? `<label class="mon-spotify" title="Only monitor releases that the reference catalogue lists for this artist"><input type="checkbox" data-spotify="${esc(a.id)}" ${a.spotify ? "checked" : ""}>Verified only</label>`
           : "";
         return `<div class="mon-row">
           <div class="mon-info"><div class="mon-name">${esc(a.name)}</div><div class="mon-status">${status}</div></div>
@@ -66,7 +66,7 @@
     })
       .then((m) => {
         render(m);
-        showToast(box.checked ? "Only Spotify-listed releases will be monitored" : "Monitoring all Qobuz releases", "ok");
+        showToast(box.checked ? "Only catalogue-listed releases will be monitored" : "Monitoring all Qobuz releases", "ok");
       })
       .catch((err) => showToast(err.message, "bad"));
   });

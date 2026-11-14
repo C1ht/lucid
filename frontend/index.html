@@ -50,7 +50,7 @@
         <button type="button" class="icon-btn" id="search-clear" title="Clear" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
-        <button type="button" class="btn btn-outline btn-small" id="spotify-toggle" aria-pressed="true" title="Check results against Spotify's catalogue first" hidden>Spotify</button>
+        <button type="button" class="btn btn-outline btn-small" id="spotify-toggle" aria-pressed="true" title="Browse the curated catalogue (MusicBrainz or Spotify) instead of Qobuz's own listings" hidden>Verified</button>
         <button type="button" class="btn btn-outline btn-small" id="paste-toggle">Paste link</button>
       </div>
 
@@ -228,17 +228,33 @@
           </div>
           <p class="panel-note">Adds YouTube results to Search and lets you paste YouTube links. Audio is saved exactly as YouTube serves it (Opus or AAC, lossy) and is never converted to FLAC.</p>
           <div class="field-grid">
-            <label class="checkbox-row"><input type="checkbox" id="youtube-fallback"> Use YouTube as a fallback when browsing Spotify: releases Qobuz doesn't have are downloaded from YouTube, track by track, tagged with Spotify's info</label>
+            <label class="checkbox-row"><input type="checkbox" id="youtube-fallback"> Use YouTube as a fallback when browsing the catalogue: releases Qobuz doesn't have are downloaded from YouTube, track by track, tagged with Spotify's info</label>
             <label class="wide">Cookies<span class="hint">Only needed if downloads fail with "Sign in to confirm you're not a bot". Paste a Netscape-format cookies.txt exported from a browser logged in to YouTube</span><textarea class="input mono" id="youtube-cookies" rows="3" spellcheck="false" placeholder="(unchanged)"></textarea></label>
           </div>
         </div>
 
         <div class="panel">
           <div class="panel-header">
-            <h2>Spotify</h2>
+            <h2>Catalogue</h2>
+            <label class="switch"><input type="checkbox" id="catalog-enabled"><span class="slider"></span></label>
+          </div>
+          <p class="panel-note">Qobuz's own artist and album listings contain wrong-artist uploads and AI filler. With this on, search and artist/album pages show a curated catalogue instead, and Qobuz (or YouTube) is only used to find the files when you download. Nothing is downloaded from the catalogue itself. MusicBrainz needs no setup; the optional Last.fm key adds artist bios and fills releases MusicBrainz is missing (only ones people actually listen to).</p>
+          <div class="field-grid">
+            <label>Source<select class="select" id="catalog-provider">
+              <option value="auto">Automatic (Spotify if set up, else MusicBrainz)</option>
+              <option value="musicbrainz">MusicBrainz</option>
+              <option value="spotify">Spotify only</option>
+            </select></label>
+            <label>Last.fm API key (optional)<input class="input" id="catalog-lastfm" type="password" autocomplete="off" placeholder="(unchanged)"><span class="hint">Free at last.fm/api/account/create</span></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Spotify (optional)</h2>
             <label class="switch"><input type="checkbox" id="spotify-enabled"><span class="slider"></span></label>
           </div>
-          <p class="panel-note">Search only, nothing is downloaded from Spotify. Searches ask Spotify what an artist really released, then look those releases up on Qobuz, so wrong-artist uploads on Qobuz are left out. It can be switched off per search. Needs a free app from developer.spotify.com (Client ID and secret).</p>
+          <p class="panel-note">An alternative catalogue with photos and complete track lists. Needs a developer app from developer.spotify.com (Client ID and secret); Spotify requires the app owner to have Premium and rate limits apps quickly.</p>
           <div class="field-grid">
             <label>Client ID<input class="input" id="spotify-client-id" autocomplete="off" spellcheck="false"></label>
             <label>Client secret<input class="input" id="spotify-client-secret" type="password" autocomplete="off" placeholder="(unchanged)"></label>
@@ -247,7 +263,7 @@
 
         <div class="panel">
           <div class="panel-header"><h2>Library check</h2></div>
-          <p class="panel-note">Goes through everything already downloaded and checks each album against Spotify (needs the Spotify settings above, saved first). Albums that Spotify doesn't list for their artist are shown in a list where you choose what to delete. Nothing is deleted until you confirm. Compilations and untagged files are skipped.</p>
+          <p class="panel-note">Goes through everything already downloaded and checks each album against the catalogue above (save the settings first). Albums that the catalogue doesn't list for their artist are shown in a list where you choose what to delete. Nothing is deleted until you confirm. Compilations and untagged files are skipped.</p>
           <div class="panel-actions">
             <button type="button" class="btn btn-outline" id="lib-start">Check library</button>
             <button type="button" class="btn btn-outline" id="lib-review" hidden>Review last results</button>
@@ -309,7 +325,7 @@
   </div>
 </dialog>
 <dialog id="lib-dialog" class="dialog dialog-lib">
-  <h2>Not found on Spotify</h2>
+  <h2>Not in the catalogue</h2>
   <p id="lib-summary" class="dialog-sub"></p>
   <div class="lib-bar">
     <button type="button" class="link-btn" id="lib-all">Select all</button>

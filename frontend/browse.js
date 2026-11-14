@@ -111,6 +111,9 @@
   const spotifyAvailable = () => !!(window.spotifyEnabled && window.spotifyConfigured);
   const spotifyActive = () => spotifyAvailable() && state.spotifyOn;
 
+  const PROVIDERS = { spotify: "Spotify", musicbrainz: "MusicBrainz" };
+  const providerName = (x) => PROVIDERS[x && x.provider] || "the catalogue";
+
   window.syncSpotifyToggle = () => {
     const btn = qs("spotify-toggle");
     btn.hidden = !spotifyAvailable();
@@ -138,7 +141,7 @@
     if (!src) return "";
     if (src.source === "qobuz") return `<span class="src src-qobuz" title="Downloaded from Qobuz">Qobuz · ${esc(src.quality || "lossless")}</span>`;
     if (src.source === "youtube")
-      return `<span class="src src-youtube" title="Not on Qobuz. Downloaded from YouTube track by track (lossy), tagged from Spotify">YouTube · lossy</span>`;
+      return `<span class="src src-youtube" title="Not on Qobuz. Downloaded from YouTube track by track (lossy), tagged from the catalogue">YouTube · lossy</span>`;
     return `<span class="src src-none" title="${src.unknown ? "Couldn't check" : "Not on Qobuz, and the YouTube fallback is off or disabled"}">${src.unknown ? "Unknown" : "Unavailable"}</span>`;
   }
   const srcSlot = (kind, id) =>
@@ -206,7 +209,7 @@
   }
 
   function artistCard(a) {
-    const sub = a.albums_count ? plural(a.albums_count, "release") : "Artist";
+    const sub = a.sub || (a.albums_count ? plural(a.albums_count, "release") : "Artist");
     return `
       <div class="card card-artist" data-open="artist:${attr(a.id)}" ${a.spotify_id ? `data-spotify="${attr(a.spotify_id)}"` : ""} role="link" tabindex="0">
         ${avatar(a.name, a.image)}
@@ -334,7 +337,7 @@
     const sp = r.spotify;
     if (!sp) return "";
     if (sp.source) {
-      return `<p class="spotify-note">Results come from Spotify. Qobuz is only used when you download or preview. <button type="button" class="link-btn" data-act="spotify-off">Search Qobuz instead</button></p>`;
+      return `<p class="spotify-note">Results come from ${esc(providerName(sp))}. Qobuz is only used when you download or preview. <button type="button" class="link-btn" data-act="spotify-off">Search Qobuz instead</button></p>`;
     }
     const parts = [];
     if (sp.albums_total) parts.push(`${sp.albums_found} of ${sp.albums_total} releases`);
@@ -345,7 +348,7 @@
 
   function idleHtml() {
     return `<div class="idle">
-      <p class="idle-title">Search ${spotifyActive() ? "Spotify (downloads come from Qobuz)" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
+      <p class="idle-title">Search ${spotifyActive() ? "the catalogue (downloads come from Qobuz)" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
       <p>Find artists, albums, songs and playlists, or paste a link to open it directly.</p>
     </div>`;
   }
@@ -422,7 +425,7 @@
   function sourceNote(src, what) {
     if (!src) return "";
     if (src.source === "youtube")
-      return `<p class="spotify-note">Qobuz doesn't have this ${what}. It will be downloaded from YouTube instead, one track at a time, as lossy audio (Opus or AAC) tagged with Spotify's details. Tracks with no good YouTube match are skipped.</p>`;
+      return `<p class="spotify-note">Qobuz doesn't have this ${what}. It will be downloaded from YouTube instead, one track at a time, as lossy audio (Opus or AAC) tagged with the catalogue's details. Tracks with no good YouTube match are skipped.</p>`;
     if (src.source === null)
       return `<p class="spotify-note">This ${what} isn't on Qobuz, so it can't be downloaded. Turn on the YouTube fallback in Settings > YouTube to get it from there.</p>`;
     return "";
@@ -522,6 +525,7 @@
         <div class="detail-info">
           <div class="eyebrow">Artist</div>
           <h1 class="detail-title">${esc(d.name)}</h1>
+          ${d.sub ? `<div class="detail-meta">${esc(d.sub)}</div>` : ""}
           <div class="detail-meta">${esc(plural(g.all.length, "release"))}${g.appears.length ? ` · appears on ${g.appears.length}` : ""}${
             d.followers ? ` · ${esc(d.followers.toLocaleString())} followers` : ""
           }</div>
@@ -533,15 +537,15 @@
         d.spotify
           ? `<p class="spotify-note">${
               d.spotify.source
-                ? "Releases, photo and details come from Spotify. Qobuz is only used for downloading."
+                ? `Releases, photo and details come from ${providerName(d.spotify)}. Qobuz is only used for downloading.`
                 : d.spotify.id
-                ? `Showing releases that Spotify lists for this artist.${
+                ? `Showing releases that ${providerName(d.spotify)} lists for this artist.${
                     d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
                   }`
-                : "This artist wasn't found on Spotify, so nothing is filtered."
+                : "This artist wasn't found in the catalogue, so nothing is filtered."
             }${d.spotify.source ? "" : ` <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button>`}</p>`
           : d.spotify_error
-            ? `<p class="spotify-note">Spotify: ${esc(d.spotify_error)} Showing unfiltered Qobuz data.</p>`
+            ? `<p class="spotify-note">Catalogue: ${esc(d.spotify_error)} Showing unfiltered Qobuz data.</p>`
             : ""
       }
       <div class="artist-bar" id="artist-bar"></div>
@@ -562,7 +566,7 @@
     state.monitorList = m.artists;
     state.monitored = new Set(m.artists.map((a) => a.id));
   }
-  const monitorEntry = (d) => state.monitorList.find((a) => a.id === d.id || (a.spotify_id && "sp:" + a.spotify_id === d.id));
+  const monitorEntry = (d) => state.monitorList.find((a) => a.id === d.id || (a.spotify_id && (a.spotify_id === d.id || "sp:" + a.spotify_id === d.id)));
 
   function renderArtistControls() {
     const d = state.current.data;
@@ -740,7 +744,7 @@
       } catch (err) {
         // Spotify trouble shouldn't break search: fall back to plain Qobuz and say so.
         const plain = await api(`/api/browse/search?q=${enc}`);
-        plain.errors = [`Spotify: ${err.message} Showing unfiltered Qobuz results.`];
+        plain.errors = [`Catalogue: ${err.message} Showing unfiltered Qobuz results.`];
         return plain;
       }
     };

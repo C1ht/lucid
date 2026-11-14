@@ -1,4 +1,5 @@
-"""Spotify as a *reference catalogue* for search -- nothing is ever downloaded from it.
+"""Reference catalogues (MusicBrainz, optionally Spotify) for search and browsing --
+nothing is ever downloaded from them. (The module keeps its old name.)
 
 Qobuz's catalogue contains plenty of releases filed under the wrong artist
 (same-name uploads, AI filler). Spotify's artist pages are curated, so we ask
@@ -20,13 +21,13 @@ from typing import Any, Optional
 
 import httpx
 
-from . import config_store
+from . import config_store, lastfm, musicbrainz
 from .browse import BrowseError, browser
+from .catalog_base import MATCH_THRESHOLD, CatalogError, norm, sim
 
 API = "https://api.spotify.com/v1"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 CACHE_TTL = 600
-MATCH_THRESHOLD = 0.86
 # Search results are small in recent Spotify API versions; page through
 # anything longer with `next` instead of relying on a large `limit`.
 PAGE = 10
@@ -34,35 +35,10 @@ MAX_DISCOGRAPHY = 40
 DISCOGRAPHY_ALL = 300
 
 
-class SpotifyError(Exception):
-    pass
+SpotifyError = CatalogError  # one error type for every catalogue
 
 
 # ---------- name matching ----------
-
-_PAREN = re.compile(r"[\(\[][^)\]]*[\)\]]")
-_SUFFIX = re.compile(r"\s+-\s+.*$")
-_FEAT = re.compile(r"\b(feat|ft|featuring|with)\b.*$")
-
-
-def norm(text: Optional[str]) -> str:
-    s = unicodedata.normalize("NFKD", text or "")
-    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
-    s = _PAREN.sub(" ", s)
-    s = _SUFFIX.sub("", s)  # "Song - Remastered 2011", "Song - Radio Edit"
-    s = s.replace("&", " and ")
-    s = _FEAT.sub("", s)
-    s = re.sub(r"[^a-z0-9]+", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def sim(a: str, b: str) -> float:
-    a, b = norm(a), norm(b)
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    return difflib.SequenceMatcher(None, a, b).ratio()
 
 
 def _artist_ok(qobuz_name: str, spotify_names: list[str]) -> bool:
@@ -167,6 +143,7 @@ class SpotifyClient:
                         "name": a["name"],
                         "popularity": a.get("popularity", 0),
                         "image": _image(a),
+                        "p": "sp:",
                     }
                     for a in (resp.get("artists") or {}).get("items", [])
                     if a
@@ -210,6 +187,7 @@ class SpotifyClient:
     def _album(a: dict) -> dict:
         arts = a.get("artists") or []
         return {
+            "p": "sp:",
             "id": a.get("id"),
             "title": a.get("name") or "",
             "artists": [x.get("name") for x in arts if x.get("name")],
@@ -229,6 +207,7 @@ class SpotifyClient:
         album = t.get("album") or {}
         arts = t.get("artists") or []
         return {
+            "p": "sp:",
             "id": t.get("id"),
             "title": t.get("name") or "",
             "artists": [x.get("name") for x in arts if x.get("name")],
@@ -327,18 +306,62 @@ async def _resolve_track(sp: dict) -> Optional[dict]:
     return best
 
 
-PREFIX = "sp:"
+PREFIXES = ("sp:", "mb:")  # which catalogue an id came from
 
 
 def is_sp(item_id: str) -> bool:
-    return item_id.startswith(PREFIX)
+    """True for any catalogue id (Spotify "sp:", MusicBrainz "mb:"), not just Spotify's."""
+    return item_id.startswith(PREFIXES)
 
 
 def raw(item_id: str) -> str:
-    return item_id[len(PREFIX):]
+    return item_id[3:]
+
+
+def _client_for(item_id: str):
+    return musicbrainz.client if item_id.startswith("mb:") else client
+
+
+def name_of(c) -> str:
+    return "Spotify" if c is client else "MusicBrainz"
+
+
+def _spotify_ok() -> bool:
+    s = config_store.load_settings().spotify
+    return bool(s.enabled and s.client_id.strip() and s.client_secret.strip())
+
+
+def active():
+    """The catalogue new searches use, or None when browsing via a catalogue is off."""
+    cat = config_store.load_settings().catalog
+    if not cat.enabled:
+        return None
+    if cat.provider == "spotify":
+        return client if _spotify_ok() else None
+    if cat.provider == "auto" and _spotify_ok():
+        return client
+    return musicbrainz.client
+
+
+def available() -> bool:
+    return active() is not None
+
+
+_meta_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _artist_meta(item_id: str) -> dict:
+    hit = _meta_cache.get(item_id)
+    if hit and time.monotonic() - hit[0] < 3600:
+        return hit[1]
+    meta = await _client_for(item_id).artist(raw(item_id))
+    _meta_cache[item_id] = (time.monotonic(), meta)
+    return meta
 
 
 def _kind(group: str, tracks: Optional[int]) -> str:
+    if group == "ep":
+        return "ep"
     if group == "single":
         return "ep" if (tracks or 1) >= 4 else "single"  # Spotify files EPs under "single"
     return "album"
@@ -347,10 +370,10 @@ def _kind(group: str, tracks: Optional[int]) -> str:
 def album_card(a: dict) -> dict:
     """Spotify album in the same shape the UI uses for Qobuz ones; ids carry "sp:"."""
     return {
-        "id": PREFIX + a["id"],
+        "id": a["p"] + a["id"],
         "title": a["title"],
         "artist": a["artists"][0] if a["artists"] else "Unknown artist",
-        "artist_id": PREFIX + a["artist_ids"][0] if a["artist_ids"] else None,
+        "artist_id": a["p"] + a["artist_ids"][0] if a["artist_ids"] else None,
         "cover": a["cover"],
         "cover_large": a["cover_large"],
         "genre": None,
@@ -367,12 +390,12 @@ def album_card(a: dict) -> dict:
 
 def track_row(t: dict) -> dict:
     return {
-        "id": PREFIX + t["id"],
+        "id": t["p"] + t["id"],
         "title": t["title"],
         "artist": ", ".join(t["artists"]),
-        "artist_id": PREFIX + t["artist_ids"][0] if t["artist_ids"] else None,
+        "artist_id": t["p"] + t["artist_ids"][0] if t["artist_ids"] else None,
         "album": t["album"],
-        "album_id": PREFIX + t["album_id"] if t.get("album_id") else None,
+        "album_id": t["p"] + t["album_id"] if t.get("album_id") else None,
         "cover": t["cover"],
         "cover_large": t["cover_large"],
         "duration": t["duration"],
@@ -385,52 +408,78 @@ def track_row(t: dict) -> dict:
 
 
 def artist_card(a: dict) -> dict:
-    return {"id": PREFIX + a["id"], "name": a["name"], "image": a.get("image"), "albums_count": None}
+    return {"id": a["p"] + a["id"], "name": a["name"], "image": a.get("image"), "albums_count": None, "sub": a.get("sub", "")}
 
 
 async def search(query: str) -> dict:
     """Search Spotify only. Nothing here touches Qobuz; Qobuz is looked up when
     something is actually downloaded or previewed."""
     query = query.strip()
-    sp = await client.search(query)
+    c = active()
+    if c is None:
+        raise SpotifyError("The reference catalogue is off or isn't set up. Check Settings > Catalogue.")
+    sp = await c.search(query)
     artists = sp["artists"]
     # An artist query ("skinz"): show that artist's real discography. Otherwise
-    # (a song or album title) use Spotify's own album hits.
-    lead = artists[0] if artists and sim(artists[0]["name"], query) >= 0.8 else None
+    # (a song or album title) use the catalogue's own album hits.
+    lead = sp["lead"] if "lead" in sp else (artists[0] if artists and sim(artists[0]["name"], query) >= 0.8 else None)
     albums = list(sp["albums"])
     if lead:
-        albums = await client.discography(lead["id"])
+        albums = await c.discography(lead["id"])
     return {
         "query": query,
         "albums": _dedupe([album_card(a) for a in albums]),
         "artists": [artist_card(a) for a in artists[:6]],
         "tracks": [track_row(t) for t in sp["tracks"]],
         "playlists": [],
-        "spotify": {"source": True},
+        "spotify": {"source": True, "provider": name_of(c)},
     }
 
 
 # ---------- detail pages (Spotify data, Qobuz only for ids) ----------
 
 
+async def _lastfm_extras(item_id: str, name: str, disco: list[dict]) -> list[dict]:
+    """Releases the catalogue lacks but Last.fm shows real listening for (by exact artist id),
+    found on Qobuz so they can be downloaded. MusicBrainz isn't exhaustive; this fills the gaps."""
+    if not item_id.startswith("mb:") or not lastfm.available():
+        return []
+    plays = await lastfm.top_albums(raw(item_id))
+    known = [d["title"] for d in disco]
+    gaps = [
+        (title, n)
+        for key, (title, n) in plays.items()
+        if n >= lastfm.VOUCH_PLAYS and not any(sim(title, k) >= MATCH_THRESHOLD for k in known)
+    ]
+    gaps = [t for t, _ in sorted(gaps, key=lambda g: -g[1])[:12]]
+    found = await asyncio.gather(*[_resolve_album({"title": t, "artists": [name], "tracks": None}) for t in gaps])
+    out = []
+    for card in found:
+        if card:
+            out.append({**card, "primary": True, "kind": card.get("kind") or "album"})
+    return out
+
+
 async def artist_page(item_id: str) -> dict:
-    sid = raw(item_id)
-    meta = await client.artist(sid)
-    disco = await client.discography(sid, DISCOGRAPHY_ALL)
+    c = _client_for(item_id)
+    meta = await _artist_meta(item_id)
+    disco = await c.discography(raw(item_id), DISCOGRAPHY_ALL)
+    cards = [album_card(a) for a in disco] + await _lastfm_extras(item_id, meta["name"], disco)
     return {
         "id": item_id,
         "name": meta["name"],
         "image": meta.get("image"),
-        "bio": "",  # Spotify's API has no biography
+        "bio": meta.get("bio") or "",
         "genres": meta.get("genres") or [],
         "followers": meta.get("followers"),
-        "albums": sorted((album_card(a) for a in disco), key=lambda c: c["date"] or "", reverse=True),
-        "spotify": {"id": sid, "source": True},
+        "sub": meta.get("sub") or "",
+        "albums": sorted(_dedupe(cards), key=lambda c: c.get("date") or "", reverse=True),
+        "spotify": {"id": item_id, "source": True, "provider": name_of(c)},
     }
 
 
 async def album_page(item_id: str) -> dict:
-    a = await client.album(raw(item_id))
+    a = await _client_for(item_id).album(raw(item_id))
     card = album_card(a)
     tracks = [track_row(t) for t in a["track_list"]]
     card.update(
@@ -450,7 +499,7 @@ async def album_page(item_id: str) -> dict:
 
 
 async def track_page(item_id: str) -> dict:
-    row = track_row(await client.track(raw(item_id)))
+    row = track_row(await _client_for(item_id).track(raw(item_id)))
     row["source"] = await source_for("track", item_id)
     return row
 
@@ -486,9 +535,9 @@ async def qobuz_card(kind: str, item_id: str) -> Optional[dict]:
     if hit is not _UNSET:
         return hit
     if kind == "album":
-        card = await _resolve_album(await client.album(raw(item_id)))
+        card = await _resolve_album(await _client_for(item_id).album(raw(item_id)))
     else:
-        card = await _resolve_track(await client.track(raw(item_id)))
+        card = await _resolve_track(await _client_for(item_id).track(raw(item_id)))
     _cards[key] = (time.monotonic(), card)
     return card
 
@@ -572,12 +621,13 @@ async def youtube_match(t: dict) -> Optional[dict]:
 
 async def youtube_plan(kind: str, item_id: str) -> dict:
     """One YouTube video per Spotify track, with the Spotify tags to apply to it."""
+    c = _client_for(item_id)
     if kind == "album":
-        album = await client.album(raw(item_id))
+        album = await c.album(raw(item_id))
         tracks = album["track_list"]
     else:
-        track = await client.track(raw(item_id))
-        album = await client.album(track["album_id"]) if track.get("album_id") else None
+        track = await c.track(raw(item_id))
+        album = await c.album(track["album_id"]) if track.get("album_id") else None
         tracks = [track]
     gate = asyncio.Semaphore(3)
 
@@ -613,8 +663,8 @@ async def qobuz_artist_id(item_id: str) -> Optional[str]:
     if (hit := _recall(item_id)) is not None:
         return hit
     sid = raw(item_id)
-    name = (await client.artist(sid))["name"]
-    disco = (await client.discography(sid))[:8]
+    name = (await _artist_meta(item_id))["name"]
+    disco = (await _client_for(item_id).discography(sid))[:8]
     hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in disco]) if c]
     ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
     return _remember(item_id, max(set(ids), key=ids.count)) if ids else None
@@ -649,55 +699,61 @@ async def _artist_card(qobuz_id: str, name: str) -> dict:
     return {"id": qobuz_id, "name": name, "image": None, "albums_count": None}
 
 
-def available() -> bool:
-    s = config_store.load_settings().spotify
-    return bool(s.enabled and s.client_id.strip() and s.client_secret.strip())
-
-
 async def find_artist_id(name: str, qobuz_albums: list[dict]) -> Optional[str]:
-    """The Spotify artist that is this Qobuz artist: same name, and the
+    """The catalogue artist (as a prefixed id) that is this Qobuz artist: same name, and the
     discography that overlaps most with the Qobuz releases (same-name artists exist)."""
-    sp = await client.search(name)
+    c = active()
+    if c is None:
+        return None
+    sp = await c.search(name)
     best, best_score = None, 0
     for cand in [a for a in sp["artists"] if sim(a["name"], name) >= 0.9][:3]:
-        titles = [d["title"] for d in await client.discography(cand["id"])]
+        titles = [d["title"] for d in await c.discography(cand["id"])]
         score = sum(1 for a in qobuz_albums if any(sim(a["title"], t) >= MATCH_THRESHOLD for t in titles))
         if score > best_score:
-            best, best_score = cand["id"], score
+            best, best_score = cand["p"] + cand["id"], score
     return best
+
+
+async def discography_for(item_id: str, limit: int) -> list[dict]:
+    return await _client_for(item_id).discography(raw(item_id), limit)
 
 
 # ---------- filtering a Qobuz artist page ----------
 
 
-async def filter_artist(page: dict, spotify_artist_id: Optional[str]) -> dict:
-    """Hide releases on a Qobuz artist page that Spotify's discography doesn't list,
-    and swap in Spotify's artist details. Finds the Spotify artist itself when
-    the page wasn't reached from a Spotify search."""
-    if not spotify_artist_id:
-        spotify_artist_id = await find_artist_id(page["name"], [a for a in page["albums"] if a.get("primary")] or page["albums"])
-    if not spotify_artist_id:
+async def filter_artist(page: dict, artist_id: Optional[str]) -> dict:
+    """Hide releases on a Qobuz artist page that the catalogue's discography doesn't list
+    (unless Last.fm shows real listening for them), and swap in the catalogue's artist
+    details. Finds the catalogue artist itself when the page wasn't reached from a search."""
+    if not artist_id:
+        artist_id = await find_artist_id(page["name"], [a for a in page["albums"] if a.get("primary")] or page["albums"])
+    elif ":" not in artist_id:
+        artist_id = "sp:" + artist_id  # ids stored before there was a second catalogue
+    if not artist_id:
         return {**page, "bio": "", "spotify": {"id": None, "hidden": 0}}
-    disco = await client.discography(spotify_artist_id)
-    titles = [d["title"] for d in disco]
+    c = _client_for(artist_id)
+    titles = [d["title"] for d in await c.discography(raw(artist_id))]
+    plays = await lastfm.top_albums(raw(artist_id)) if artist_id.startswith("mb:") else {}
+    vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
     kept, hidden = [], 0
     for a in page["albums"]:
-        if not a.get("primary") or any(sim(a["title"], t) >= MATCH_THRESHOLD for t in titles):
+        if not a.get("primary") or any(sim(a["title"], t) >= MATCH_THRESHOLD for t in titles + vouched):
             kept.append(a)
         else:
             hidden += 1
     meta: dict = {}
     try:
-        meta = await client.artist(spotify_artist_id)
+        meta = await _artist_meta(artist_id)
     except SpotifyError:
         pass  # the filtered list is still useful without the extras
     return {
         **page,
         "albums": kept,
         "image": meta.get("image") or page.get("image"),
-        # Spotify's API has no biography; the Qobuz one is dropped rather than mixed in.
-        "bio": "",
+        # Only the catalogue's own bio; the Qobuz one is dropped rather than mixed in.
+        "bio": meta.get("bio") or "",
         "genres": meta.get("genres") or [],
         "followers": meta.get("followers"),
-        "spotify": {"id": spotify_artist_id, "hidden": hidden},
+        "spotify": {"id": artist_id, "hidden": hidden, "provider": name_of(c)},
     }

@@ -1,4 +1,4 @@
-/* Settings > Library check: scan the downloaded library against Spotify, then
+/* Settings > Library check: scan the downloaded library against the catalogue, then
    pick which unmatched albums/tracks to delete. Depends on app.js helpers
    (qs, api, showToast, escapeHtml, askConfirm). */
 
@@ -48,7 +48,7 @@
     qs("lib-del-sel").textContent = n ? `Delete selected (${n})` : "Delete selected";
     qs("lib-del-sel").disabled = !n;
     qs("lib-del-all").disabled = !total;
-    qs("lib-summary").textContent = `${plural(items.length, "album")} (${plural(total, "file")}) didn't match Spotify. Tick what to delete; anything unticked stays.`;
+    qs("lib-summary").textContent = `${plural(items.length, "album")} (${plural(total, "file")}) didn't match the catalogue. Tick what to delete; anything unticked stays.`;
   }
 
   function open(newItems) {
@@ -89,7 +89,7 @@
     if (s.status === "done") {
       const st = s.stats;
       qs("lib-review").hidden = !s.items.length;
-      status(`${st.matched} of ${st.albums} albums match Spotify, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}`, st.unmatched ? "" : "ok");
+      status(`${st.matched} of ${st.albums} albums match, ${st.unmatched} don't.${st.skipped ? ` ${plural(st.skipped, "file")} skipped.` : ""}`, st.unmatched ? "" : "ok");
       if (s.items.length && qs("lib-start").dataset.fresh) open(s.items);
       else items = s.items;
       delete qs("lib-start").dataset.fresh;

@@ -36,6 +36,14 @@ class SoundcloudSettings(BaseModel):
     app_version: str = ""
 
 
+class CatalogSettings(BaseModel):
+    # Browse a curated reference catalogue instead of Qobuz's own listings, which
+    # contain wrong-artist uploads. Qobuz (or YouTube) is only used to download.
+    enabled: bool = True
+    provider: Literal["auto", "musicbrainz", "spotify"] = "auto"  # auto: Spotify if set up, else MusicBrainz
+    lastfm_key: str = ""  # optional: fills gaps in MusicBrainz and gives artist bios
+
+
 class SpotifySettings(BaseModel):
     # Search only: Spotify says what an artist really released, Qobuz supplies the files.
     enabled: bool = False
@@ -100,6 +108,7 @@ class Settings(BaseModel):
     soundcloud: SoundcloudSettings = Field(default_factory=SoundcloudSettings)
     youtube: YoutubeSettings = Field(default_factory=YoutubeSettings)
     spotify: SpotifySettings = Field(default_factory=SpotifySettings)
+    catalog: CatalogSettings = Field(default_factory=CatalogSettings)
     conversion: ConversionSettings = Field(default_factory=ConversionSettings)
     filepaths: FilepathSettings = Field(default_factory=FilepathSettings)
     downloads: DownloadsSettings = Field(default_factory=DownloadsSettings)

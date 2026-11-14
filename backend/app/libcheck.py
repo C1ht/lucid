@@ -15,7 +15,7 @@ from typing import Optional
 
 import mutagen
 
-from . import config_store, library, navidrome, spotify
+from . import config_store, lastfm, library, navidrome, spotify
 from .browse import BrowseError
 from .tagging.staging import AUDIO_EXTS
 
@@ -101,7 +101,7 @@ async def _spotify_artist(name: str, local_albums: list[str]) -> Optional[list[d
     for n in names:
         sid = await spotify.find_artist_id(n, [{"title": a} for a in local_albums])
         if sid:
-            return await spotify.client.discography(sid, DISCOGRAPHY_LIMIT)
+            return await spotify.discography_for(sid, DISCOGRAPHY_LIMIT)
     return None
 
 
@@ -111,7 +111,7 @@ async def _run() -> None:
         root = config_store.resolve_download_folder(settings)
         state.root = root
         if not spotify.available():
-            raise spotify.SpotifyError("Turn on Spotify and add your Client ID and secret in Settings first.")
+            raise spotify.SpotifyError("Turn on the reference catalogue under Settings > Catalogue first.")
 
         state.stage = "Reading your library"
         files = await asyncio.to_thread(_scan_files, root)
@@ -133,7 +133,8 @@ async def _run() -> None:
         for a in albums.values():
             by_artist.setdefault(spotify.norm(a["artist"]), []).append(a)
 
-        state.stage = "Checking against Spotify"
+        provider = spotify.name_of(spotify.active())
+        state.stage = f"Checking against {provider}"
         state.total, state.done = len(by_artist), 0
         unmatched: list[dict] = []
         for group in by_artist.values():
@@ -141,12 +142,15 @@ async def _run() -> None:
             titles = [d["title"] for d in disco] if disco is not None else []
             for a in group:
                 if disco is None:
-                    reason = "Artist not found on Spotify"
+                    reason = f"Artist not found on {provider}"
                 elif any(spotify.sim(a["album"], t) >= spotify.MATCH_THRESHOLD for t in titles):
                     state.stats["matched"] += 1
                     continue
+                elif await lastfm.album_plays(a["artist"], a["album"]) >= lastfm.VOUCH_PLAYS:
+                    state.stats["matched"] += 1  # Last.fm shows real listening: keep it
+                    continue
                 else:
-                    reason = "Not on this artist's Spotify page"
+                    reason = f"Not on this artist's {provider} page"
                 unmatched.append({**a, "reason": reason})
             state.done += 1
             await asyncio.sleep(0.2)  # stay well under Spotify's rate limit
