@@ -427,14 +427,32 @@ async def search(query: str) -> dict:
     # An artist query ("skinz"): show that artist's real discography. Otherwise
     # (a song or album title) use the catalogue's own album hits.
     lead = sp["lead"] if "lead" in sp else (artists[0] if artists and sim(artists[0]["name"], query) >= 0.8 else None)
-    albums = list(sp["albums"])
+    albums, tracks = list(sp["albums"]), list(sp["tracks"])
+    if c is musicbrainz.client and config_store.load_settings().catalog.include_deezer:
+        # MusicBrainz may not know the artist you mean (it missed the Danish "Omar"); Deezer lists
+        # several of the same name. Show them all and let the user pick, never guess.
+        named = [a for a in artists if sim(a["name"], query) >= 0.9][:3]
+        mb_titles = []
+        for a in named:
+            try:
+                mb_titles.append([d["title"] for d in await c.discography(a["id"], 100)])
+            except CatalogError:
+                mb_titles.append([])
+        extra, photos = await deezer.client.candidates(query, mb_titles)
+        for i, pic in photos.items():
+            if pic and not named[i].get("image"):
+                named[i]["image"] = pic
+        if extra:
+            artists = artists + extra
+            if lead:  # another notable artist shares the name: not one clear match any more
+                lead, albums, tracks = None, [], []
     if lead:
         albums = await full_discography(lead["p"] + lead["id"], 60)
     return {
         "query": query,
         "albums": _dedupe([album_card(a) for a in albums]),
-        "artists": [artist_card(a) for a in artists[:6]],
-        "tracks": [track_row(t) for t in sp["tracks"]],
+        "artists": [artist_card(a) for a in artists[:8]],
+        "tracks": [track_row(t) for t in tracks],
         "playlists": [],
         "spotify": {"source": True, "provider": name_of(c)},
     }
@@ -668,7 +686,7 @@ async def qobuz_artist_id(item_id: str) -> Optional[str]:
         return hit
     sid = raw(item_id)
     name = (await _artist_meta(item_id))["name"]
-    disco = (await _client_for(item_id).discography(sid))[:8]
+    disco = (await full_discography(item_id, 12))[:8]
     hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in disco]) if c]
     ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
     return _remember(item_id, max(set(ids), key=ids.count)) if ids else None
@@ -736,6 +754,9 @@ async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[d
     (2023 or later) release only MusicBrainz lists (not Deezer, and not vouched for by Last.fm
     listening) is marked `verified: False`. Releases only Deezer lists are added; Deezer alone is trusted because its
     artist was matched on overlapping albums."""
+    if item_id.startswith("dz:"):
+        name = (await _artist_meta(item_id))["name"]
+        return await deezer.client.discography(raw(item_id), limit, {"id": raw(item_id), "name": name})
     base = [dict(a) for a in await _client_for(item_id).discography(raw(item_id), limit)]
     if item_id.startswith("mb:") and config_store.load_settings().catalog.include_deezer:
         try:

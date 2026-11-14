@@ -158,18 +158,23 @@ class MusicBrainz:
         for a in arts:
             sub = ", ".join(x for x in [a.get("disambiguation"), a.get("country")] if x)
             artists.append({"p": PREFIX, "id": a["id"], "name": a["name"], "popularity": a.get("score", 0), "image": None, "sub": sub})
-        confident = [a for a in artists if sim(a["name"], query) >= 0.9 and a["popularity"] >= 90]
+        confident = [a for a in artists if sim(a["name"], query) >= 0.9 and a["popularity"] >= 70]
         # Several artists share the name: don't guess which one is meant, let the user pick.
         lead = confident[0] if len(confident) == 1 else None
+
+        def by_named_artist(names: list[str]) -> bool:
+            return any(sim(n, query) >= 0.9 for n in names)
 
         albums: list[dict] = []
         if not lead:
             rgs = (await self.get("/release-group", {"query": q, "limit": 10})).get("release-groups") or []
             albums = [self._rg(r) for r in rgs if r.get("primary-type") in KINDS]
+            if confident:  # releases by the same-name artists belong on their pages, not mixed here
+                albums = [a for a in albums if not by_named_artist(a["artists"])]
         tracks = []
-        # An artist-name query wants that artist's songs, not other artists' songs that share the word.
-        rec_query = f'artist:"{q}"' if confident else q
-        for r in (await self.get("/recording", {"query": rec_query, "limit": 10})).get("recordings") or []:
+        # With one clear artist, their songs; with several of the same name, none (they'd be mixed).
+        rec_query = f'artist:"{q}"' if lead else q
+        for r in ([] if len(confident) > 1 else (await self.get("/recording", {"query": rec_query, "limit": 10})).get("recordings") or []):
             rel = next((x for x in r.get("releases") or [] if (x.get("release-group") or {}).get("primary-type") in KINDS), None)
             album = None
             if rel:

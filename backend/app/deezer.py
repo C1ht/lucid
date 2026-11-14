@@ -20,6 +20,15 @@ PREFIX = "dz:"
 CACHE_TTL = 6 * 3600
 
 
+def overlap(dz_titles: list[str], mb_titles: list[str]) -> bool:
+    """Do these two discographies belong to the same artist? One shared title ("911", "Intro")
+    proves nothing for a common name, so require a real overlap."""
+    if not dz_titles or not mb_titles:
+        return False
+    matches = sum(1 for m in mb_titles if any(sim(t, m) >= MATCH_THRESHOLD for t in dz_titles))
+    return matches >= min(2, len(mb_titles)) and matches >= 0.2 * min(len(mb_titles), len(dz_titles))
+
+
 class Deezer:
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, Any]] = {}
@@ -134,6 +143,49 @@ class Deezer:
             out.append(self._album(a, artist))
         return out
 
+    async def artist(self, artist_id: str) -> dict:
+        a = await self.get(f"/artist/{artist_id}")
+        pic = a.get("picture_big") or a.get("picture_medium")
+        return {
+            "name": a.get("name") or "",
+            "image": pic if pic and "/images/artist//" not in pic else None,
+            "genres": [],
+            "followers": a.get("nb_fan"),
+            "bio": "",
+            "sub": f"{a.get('nb_album')} releases" if a.get("nb_album") else "",
+        }
+
+    async def candidates(self, name: str, mb_titles: list[list[str]]) -> tuple[list[dict], dict[int, str]]:
+        """Notable Deezer artists with this name that MusicBrainz doesn't account for.
+
+        Returns (artist cards for Deezer-only artists, {index of MB artist: Deezer photo}).
+        A Deezer artist whose albums overlap one of the MusicBrainz artists' (`mb_titles`) is
+        that same artist, so it only lends its photo. Tiny same-name accounts are ignored."""
+        try:
+            found = (await self.get("/search/artist", {"q": name, "limit": 10})).get("data") or []
+            notable = [
+                c for c in found
+                if sim(c.get("name", ""), name) >= 0.9 and (c.get("nb_fan") or 0) >= 50
+            ][:5]
+            extra, photos = [], {}
+            for c in notable:
+                albums = await self._paged(f"/artist/{c['id']}/albums", 100)
+                titles = [a.get("title", "") for a in albums]
+                owner = next((i for i, mb in enumerate(mb_titles) if overlap(titles, mb)), None)
+                pic = c.get("picture_medium")
+                pic = pic if pic and "/images/artist//" not in pic else None
+                if owner is not None:
+                    photos.setdefault(owner, pic)
+                    continue
+                latest = max(albums, key=lambda a: a.get("release_date") or "", default=None)
+                sub = f"{c.get('nb_album') or len(albums)} releases"
+                if latest:
+                    sub += f", latest “{latest.get('title')}” ({(latest.get('release_date') or '')[:4]})"
+                extra.append({"p": PREFIX, "id": str(c["id"]), "name": c["name"], "sub": sub, "image": pic, "popularity": c.get("nb_fan") or 0})
+            return extra, photos
+        except CatalogError:
+            return [], {}
+
     # ---- matching a MusicBrainz artist to its Deezer artist ----
 
     async def find_artist(self, name: str, titles: list[str]) -> Optional[dict]:
@@ -143,9 +195,12 @@ class Deezer:
         try:
             found = (await self.get("/search/artist", {"q": name, "limit": 6})).get("data") or []
             best, best_score = None, 0
-            for cand in [c for c in found if sim(c.get("name", ""), name) >= 0.9][:3]:
+            for cand in [c for c in found if sim(c.get("name", ""), name) >= 0.9][:4]:
                 albums = await self._paged(f"/artist/{cand['id']}/albums", 100)
-                score = sum(1 for t in titles if any(sim(a.get("title", ""), t) >= MATCH_THRESHOLD for a in albums))
+                dz_titles = [a.get("title", "") for a in albums]
+                if not overlap(dz_titles, titles):
+                    continue
+                score = sum(1 for t in titles if any(sim(x, t) >= MATCH_THRESHOLD for x in dz_titles))
                 if score > best_score:
                     best, best_score = cand, score
             return best

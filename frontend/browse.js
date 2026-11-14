@@ -111,7 +111,7 @@
   const spotifyAvailable = () => !!(window.spotifyEnabled && window.spotifyConfigured);
   const spotifyActive = () => spotifyAvailable() && state.spotifyOn;
 
-  const PROVIDERS = { spotify: "Spotify", musicbrainz: "MusicBrainz" };
+  const PROVIDERS = { spotify: "Spotify", musicbrainz: "MusicBrainz", deezer: "Deezer" };
   const providerName = (x) => PROVIDERS[x && x.provider] || "the catalogue";
 
   window.syncSpotifyToggle = () => {
