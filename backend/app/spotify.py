@@ -125,12 +125,19 @@ class SpotifyClient:
                 wait = r.headers.get("Retry-After", "a bit")
                 raise SpotifyError(f"Spotify is rate limiting this app. Try again in {wait}s.")
             if r.status_code == 403:
+                try:
+                    said = (r.json().get("error") or {}).get("message") or ""
+                except ValueError:
+                    said = r.text[:120]
+                where = url.replace(API, "").split("?")[0]
                 raise SpotifyError(
-                    "Spotify refused the request (403). Apps in development mode need the app owner "
-                    "to have Spotify Premium; check your developer dashboard."
+                    f"Spotify refused {where} (403: {said or 'no reason given'}). "
+                    "If it mentions Premium, the account that owns the app on developer.spotify.com "
+                    "must have Premium (it can take a while to apply); also check the app is the one "
+                    "whose Client ID/secret you pasted."
                 )
             if r.status_code != 200:
-                raise SpotifyError(f"Spotify error {r.status_code}.")
+                raise SpotifyError(f"Spotify error {r.status_code} on {url.replace(API, '').split('?')[0]}.")
             return r.json()
         raise SpotifyError("Spotify login failed.")
 
