@@ -274,13 +274,34 @@ async def _qobuz(query: str) -> dict:
             return {"albums": [], "tracks": [], "artists": []}
 
 
+_VARIANT = re.compile(
+    r"\b(nightcore|sped up|speed up|slowed|reverb|remix|rmx|live|acoustic|instrumental|karaoke|"
+    r"cover|8d|lofi|lo fi|mashup|bootleg|flip|vip|demo|a cappella|acapella)\b"
+)
+
+
+def _variants(*titles: Optional[str]) -> set:
+    """Version markers in a title ("Nightcore", "Remix", "Live"...). norm() drops anything in
+    brackets, so without this "Song" and "Song (Nightcore Remix)" look like the same track."""
+    out = set()
+    for t in titles:
+        out |= set(_VARIANT.findall(unicodedata.normalize("NFKD", t or "").lower()))
+    return out
+
+
+def _same_version(c: dict, sp: dict, album: bool = False) -> bool:
+    wanted = _variants(sp["title"], sp.get("album"))
+    have = _variants(c["title"], None if album else c.get("album"))
+    return have == wanted
+
+
 async def _resolve_album(sp: dict) -> Optional[dict]:
     names = sp["artists"]
     resp = await _qobuz(f"{names[0] if names else ''} {sp['title']}".strip())
     best, best_score = None, 0.0
     for c in resp["albums"]:
         t = sim(c["title"], sp["title"])
-        if t < MATCH_THRESHOLD or not _artist_ok(c["artist"], names):
+        if t < MATCH_THRESHOLD or not _artist_ok(c["artist"], names) or not _same_version(c, sp, True):
             continue
         score = t + (0.1 if sp["tracks"] and c.get("tracks_count") == sp["tracks"] else 0)
         if score > best_score:
@@ -294,7 +315,7 @@ async def _resolve_track(sp: dict) -> Optional[dict]:
     best, best_score = None, 0.0
     for c in resp["tracks"]:
         t = sim(c["title"], sp["title"])
-        if t < MATCH_THRESHOLD or not _artist_ok(c["artist"], names):
+        if t < MATCH_THRESHOLD or not _artist_ok(c["artist"], names) or not _same_version(c, sp):
             continue
         score = t
         if c.get("duration") and sp["duration"] and abs(c["duration"] - sp["duration"]) <= 3:
