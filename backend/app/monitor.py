@@ -151,7 +151,7 @@ class Monitor:
             for entry in list(self.artists.values()):
                 if entry["id"] not in self.artists:
                     continue
-                await self._check_artist(entry)
+                await self._safe_check(entry)
                 await asyncio.sleep(1)  # be gentle with the API
             self.last_run_at = _now().isoformat()
             self.last_run_date = _now().date().isoformat()
@@ -168,8 +168,18 @@ class Monitor:
         async with self._lock:
             entry = self.artists.get(artist_id)
             if entry:
-                await self._check_artist(entry)
+                await self._safe_check(entry)
                 self._save()
+
+    async def _safe_check(self, entry: dict) -> None:
+        """One artist's trouble (a timeout, an odd reply) is shown on its row, and never stops
+        the others or leaves a check that silently did nothing."""
+        try:
+            await self._check_artist(entry)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            entry["last_error"] = f"Check failed: {exc or type(exc).__name__}. Will retry at the next check."
 
     def _forget_failed(self, entry: dict) -> None:
         """Let releases whose download failed (or was interrupted) be tried again."""

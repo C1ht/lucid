@@ -41,9 +41,15 @@ SpotifyError = CatalogError  # one error type for every catalogue
 # ---------- name matching ----------
 
 
+_CREDIT_SPLIT = re.compile(r"\s*(?:,|;|/| & | and | feat\.? | ft\.? | x | with )\s*", re.I)
+
+
 def _artist_ok(qobuz_name: str, spotify_names: list[str]) -> bool:
-    q = norm(qobuz_name)
-    return any(q == norm(n) or sim(q, n) >= 0.92 for n in spotify_names)
+    """Same artist? Qobuz may credit a collaboration as "A, B" where the catalogue lists [A, B]
+    (or only one of them), so every name in the credit counts."""
+    parts = {norm(qobuz_name)} | {norm(p) for p in _CREDIT_SPLIT.split(qobuz_name or "") if p}
+    want = [norm(n) for n in spotify_names]
+    return any(q and (q == n or sim(q, n) >= 0.92) for q in parts for n in want)
 
 
 # ---------- API client ----------
@@ -270,8 +276,10 @@ async def _qobuz(query: str) -> dict:
             return await browser.search(query)
         except BrowseError:
             raise
-        except Exception:  # one odd item shouldn't sink the whole page
-            return {"albums": [], "tracks": [], "artists": []}
+        except Exception as exc:
+            # A timeout or odd reply is not "Qobuz doesn't have it": saying so would cache a miss
+            # and send the download to YouTube. Let the caller say "try again" instead.
+            raise BrowseError(f"Qobuz didn't answer ({type(exc).__name__}). Try again in a moment.", 503) from exc
 
 
 _VARIANT = re.compile(
@@ -290,14 +298,26 @@ def _variants(*titles: Optional[str]) -> set:
 
 
 def _same_version(c: dict, sp: dict, album: bool = False) -> bool:
-    wanted = _variants(sp["title"], sp.get("album"))
-    have = _variants(c["title"], None if album else c.get("album"))
-    return have == wanted
+    """Does this Qobuz item's title carry the same version markers (remix, live...) as the wanted one?"""
+    return _variants(c["title"]) == _variants(sp["title"])
+
+
+def _queries(sp: dict) -> list[str]:
+    names = sp["artists"]
+    first = f"{names[0] if names else ''} {sp['title']}".strip()
+    return [first] + ([sp["title"]] if names and sp["title"] and sp["title"] != first else [])
 
 
 async def _resolve_album(sp: dict) -> Optional[dict]:
     names = sp["artists"]
-    resp = await _qobuz(f"{names[0] if names else ''} {sp['title']}".strip())
+    for q in _queries(sp):
+        hit = _best_album(sp, names, await _qobuz(q))
+        if hit:
+            return hit
+    return None
+
+
+def _best_album(sp: dict, names: list[str], resp: dict) -> Optional[dict]:
     best, best_score = None, 0.0
     for c in resp["albums"]:
         t = sim(c["title"], sp["title"])
@@ -311,13 +331,22 @@ async def _resolve_album(sp: dict) -> Optional[dict]:
 
 async def _resolve_track(sp: dict) -> Optional[dict]:
     names = sp["artists"]
-    resp = await _qobuz(f"{names[0] if names else ''} {sp['title']}".strip())
+    for q in _queries(sp):
+        hit = _best_track(sp, names, await _qobuz(q))
+        if hit:
+            return hit
+    return None
+
+
+def _best_track(sp: dict, names: list[str], resp: dict) -> Optional[dict]:
     best, best_score = None, 0.0
     for c in resp["tracks"]:
         t = sim(c["title"], sp["title"])
         if t < MATCH_THRESHOLD or not _artist_ok(c["artist"], names) or not _same_version(c, sp):
             continue
         score = t
+        if _variants(c.get("album")) != _variants(sp.get("album")):
+            score -= 0.2  # same song, but on a live/remix compilation: prefer the right release
         if c.get("duration") and sp["duration"] and abs(c["duration"] - sp["duration"]) <= 3:
             score += 0.15
         if c.get("album") and sp["album"] and sim(c["album"], sp["album"]) >= MATCH_THRESHOLD:
@@ -495,7 +524,7 @@ async def _lastfm_extras(item_id: str, name: str, disco: list[dict]) -> list[dic
         if n >= lastfm.VOUCH_PLAYS and not any(sim(title, k) >= MATCH_THRESHOLD for k in known)
     ]
     gaps = [t for t, _ in sorted(gaps, key=lambda g: -g[1])[:12]]
-    found = await asyncio.gather(*[_resolve_album({"title": t, "artists": [name], "tracks": None}) for t in gaps])
+    found = [c for c in await asyncio.gather(*[_resolve_album({"title": t, "artists": [name], "tracks": None}) for t in gaps], return_exceptions=True) if isinstance(c, dict) or c is None]
     out = []
     for card in found:
         if card:
@@ -707,9 +736,18 @@ async def qobuz_artist_id(item_id: str) -> Optional[str]:
         return hit
     sid = raw(item_id)
     name = (await _artist_meta(item_id))["name"]
-    disco = (await full_discography(item_id, 12))[:8]
-    hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in disco]) if c]
-    ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
+    ids: list[str] = []
+    # The catalogue's own list is enough to recognise the Qobuz artist (no cross-checking needed,
+    # which would take many extra requests); the full cross-checked list is only a fallback.
+    for disco in (None, True):
+        if disco is None:
+            releases = (await _client_for(item_id).discography(sid, 12))[:8]
+        else:
+            releases = (await full_discography(item_id, 12))[:8]
+        hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in releases], return_exceptions=True) if isinstance(c, dict)]
+        ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
+        if ids:
+            break
     return _remember(item_id, max(set(ids), key=ids.count)) if ids else None
 
 
@@ -802,7 +840,26 @@ async def verify_deezer(dz: list[dict], trusted_titles: list[str], judge: Option
     return dz
 
 
-async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[dict]:
+_disco_cache: dict[tuple, tuple[float, list[dict]]] = {}
+
+
+async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL, judge: Optional[list[str]] = None) -> list[dict]:
+    """Cached for 30 minutes (the cross-checking is slow). With `judge` (release titles), Deezer
+    releases are only ISRC-checked when they match one of those titles; the rest are left
+    unchecked, which suits filtering a Qobuz page where only its titles matter."""
+    key = (item_id, limit)
+    hit = _disco_cache.get(key)
+    if hit and time.monotonic() - hit[0] < 1800 and (judge is None or hit[1] is not None):
+        return [dict(a) for a in hit[1]]
+    out = await _full_discography(item_id, limit, judge)
+    if judge is None:  # only a complete check is worth keeping for the next caller
+        _disco_cache[key] = (time.monotonic(), out)
+        if len(_disco_cache) > 60:
+            _disco_cache.pop(min(_disco_cache, key=lambda k: _disco_cache[k][0]), None)
+    return [dict(a) for a in out]
+
+
+async def _full_discography(item_id: str, limit: int, judge: Optional[list[str]]) -> list[dict]:
     """The catalogue's releases for an artist, cross-checked and extended with Deezer's.
 
     MusicBrainz is open to anyone, and AI-generated uploads do end up in it, so a recent
@@ -821,7 +878,7 @@ async def full_discography(item_id: str, limit: int = DISCOGRAPHY_ALL) -> list[d
             dz = None
         if dz is not None:
             plays = await lastfm.top_albums(raw(item_id))
-            await verify_deezer(dz, [a["title"] for a in base])
+            await verify_deezer(dz, [a["title"] for a in base], judge)
             trusted = [a["title"] for a in dz if a["verified"]] + [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
             for a in base:
                 a["verified"] = _pre_ai(a) or any(sim(a["title"], t) >= MATCH_THRESHOLD for t in trusted)
@@ -919,7 +976,8 @@ async def filter_artist(page: dict, artist_id: Optional[str]) -> dict:
     if not artist_id:
         return {**page, "bio": "", "spotify": {"id": None, "hidden": 0}}
     c = _client_for(artist_id)
-    titles = [d["title"] for d in await full_discography(artist_id, 300) if d.get("verified", True)]
+    mine = [a["title"] for a in page["albums"] if a.get("primary")]
+    titles = [d["title"] for d in await full_discography(artist_id, 300, mine) if d.get("verified", True)]
     plays = await lastfm.top_albums(raw(artist_id)) if artist_id.startswith("mb:") else {}
     vouched = [t for t, n in plays.values() if n >= lastfm.VOUCH_PLAYS]
     kept, hidden = [], 0
