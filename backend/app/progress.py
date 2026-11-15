@@ -44,6 +44,21 @@ def estimate_track_bytes(
     return int(raw_bytes * 0.6)
 
 
+def estimate_total_bytes_tidal(meta: dict, quality: int) -> Optional[int]:
+    """Same idea for a raw Tidal album/track response: lossy tiers by bitrate, FLAC by duration
+    (hi-res releases are assumed 24-bit/96 kHz). Approximate; the bar corrects itself as bytes land."""
+    items = meta.get("tracks") if isinstance(meta.get("tracks"), list) else [meta]
+    total, found = 0, False
+    for item in items:
+        tags = ((item.get("mediaMetadata") or {}).get("tags")) or []
+        hires = quality >= 3 and ("HIRES_LOSSLESS" in tags or item.get("audioQuality") in ("HI_RES", "HI_RES_LOSSLESS"))
+        est = estimate_track_bytes(item.get("duration"), 3 if hires else min(quality, 2), 24 if hires else 16, 96000 if hires else 44100)
+        if est:
+            total += est
+            found = True
+    return total if found else None
+
+
 def estimate_total_bytes(meta: dict, quality: int) -> Optional[int]:
     """meta: a raw Qobuz response for a track OR an album (has tracks.items)."""
     items = (meta.get("tracks") or {}).get("items")

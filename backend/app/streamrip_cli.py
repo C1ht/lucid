@@ -19,7 +19,7 @@ JOB_TIMEOUT_SECONDS = int(os.environ.get("LUCID_JOB_TIMEOUT_SECONDS", str(60 * 6
 
 
 def _base_args(folder_override: Optional[str] = None) -> list[str]:
-    args = [paths.RIP_BIN, "--config-path", str(paths.STREAMRIP_CONFIG_PATH), "--no-progress"]
+    args = [*paths.RIP_COMMAND, "--config-path", str(paths.STREAMRIP_CONFIG_PATH), "--no-progress"]
     if folder_override is not None:
         args += ["--folder", folder_override]
     return args

@@ -8,8 +8,15 @@ fixed separator list (`" / "`, `" feat. "`, `" feat "`, `" ft. "`, `" ft "`,
 feature bypasses streamrip's flattening by independently fetching the raw
 Qobuz API response (still structured) and re-tagging files after download.
 
-Status: **Qobuz only.** Tidal/Deezer/SoundCloud downloads are unaffected for
-now and go through the original path unchanged.
+Status: **Qobuz and Tidal.** Deezer/SoundCloud downloads are unaffected and go
+through the original path unchanged.
+
+Tidal (`tagging/tidal_mapper.py`) maps what its API gives: main vs featured artists
+(`ARTIST` display + `ARTISTS` list, `ALBUMARTIST(S)`), `COMPILATION` for Various
+Artists, `RELEASEDATE`, `BARCODE` (UPC), track/disc totals and `ISRC`. Tidal's album
+and track responses carry no label, genre or role credits, so those are left as
+streamrip wrote them. A single-track Tidal download fetches its album too, for the
+date, barcode and totals.
 
 ## How it works
 
@@ -104,8 +111,8 @@ written, since older Navidrome releases can't read some of it:
   joined "display" tag alongside a distinct multi-value list isn't directly
   possible there, and MP4's repeated-atom behavior hasn't been verified
   against Navidrome.)
-- Tidal/Deezer/SoundCloud: not yet implemented (next phase). Qobuz has by far
-  the richest structured data of the four in streamrip's own client layer.
+- Deezer/SoundCloud: not implemented. Qobuz has by far the richest structured data
+  in streamrip's client layer; Tidal gets the subset described above.
 
 ## Move safety
 

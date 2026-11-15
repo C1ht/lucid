@@ -304,18 +304,29 @@ class JobManager:
                 tagging_pref = req.navidrome_tagging
 
             tagging_wanted = tagging_pref if tagging_pref is not None else settings.tagging.enabled
-            do_retag = source == "qobuz" and media_type in ("album", "track") and tagging_wanted
+            do_retag = source in ("qobuz", "tidal") and media_type in ("album", "track") and tagging_wanted
 
             # Fetch Qobuz metadata once, reused for both the size estimate
             # (progress bar) and retagging -- never fails the job if it errors.
             meta: Optional[dict] = None
             estimated_total: Optional[int] = None
-            if source == "qobuz" and media_type and item_id:
+            album_meta: Optional[dict] = None  # Tidal singles: the album the track is on
+            if source in ("qobuz", "tidal") and media_type and item_id:
                 try:
-                    meta = await metadata_fetch.fetch_metadata("qobuz", item_id, media_type)
-                    estimated_total = progress.estimate_total_bytes(meta, settings.qobuz.quality)
+                    meta = await metadata_fetch.fetch_metadata(source, item_id, media_type)
+                    if source == "qobuz":
+                        estimated_total = progress.estimate_total_bytes(meta, settings.qobuz.quality)
+                    else:
+                        estimated_total = progress.estimate_total_bytes_tidal(meta, settings.tidal.quality)
                 except Exception:  # noqa: BLE001 - progress/tagging are both best-effort
                     meta = None
+                if source == "tidal" and media_type == "track" and meta is not None:
+                    try:
+                        album_id = (meta.get("album") or {}).get("id")
+                        if album_id:
+                            album_meta = await metadata_fetch.fetch_metadata("tidal", str(album_id), "album")
+                    except Exception:  # noqa: BLE001 - the tagger copes without it
+                        album_meta = None
 
             async def on_progress(bytes_so_far: int, speed_mbps: float, percent: Optional[float]) -> None:
                 job.bytes_downloaded = bytes_so_far
@@ -401,11 +412,16 @@ class JobManager:
 
             if do_retag:
                 if meta is None:
-                    await on_line("[tagging] Couldn't fetch Qobuz metadata, files kept as streamrip wrote them.")
+                    await on_line(f"[tagging] Couldn't fetch {source.title()} metadata, files kept as streamrip wrote them.")
                 else:
                     try:
                         tier = settings.tagging.navidrome_version_tier
-                        if media_type == "album":
+                        if source == "tidal":
+                            if media_type == "album":
+                                notes = retag.retag_tidal_album(staging_dir, meta, tier)
+                            else:
+                                notes = retag.retag_tidal_track(staging_dir, meta, album_meta, tier)
+                        elif media_type == "album":
                             notes = retag.retag_qobuz_album(staging_dir, meta, tier)
                         else:
                             notes = retag.retag_qobuz_track(staging_dir, meta, tier)

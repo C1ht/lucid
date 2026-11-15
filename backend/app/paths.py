@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 MUSIC_DIR = Path(os.environ.get("LUCID_MUSIC_DIR", "/music"))
@@ -14,7 +15,14 @@ JOBS_HISTORY_PATH = CONFIG_DIR / "jobs.json"
 MONITORS_PATH = CONFIG_DIR / "monitors.json"
 COVERS_DIR = CONFIG_DIR / "covers"
 
-RIP_BIN = os.environ.get("LUCID_RIP_BIN", "rip")
+# Unless LUCID_RIP_BIN points at a specific streamrip CLI, run `rip` through our wrapper, which
+# adds Tidal hi-res FLAC support and otherwise behaves exactly like `rip`.
+RIP_COMMAND = (
+    [os.environ["LUCID_RIP_BIN"]]
+    if os.environ.get("LUCID_RIP_BIN")
+    else [sys.executable, str(Path(__file__).with_name("rip_wrapper.py"))]
+)
+RIP_BIN = RIP_COMMAND[0]
 
 
 def ensure_dirs() -> None:

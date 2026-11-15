@@ -61,7 +61,7 @@
 
       <div class="browse-toolbar" id="browse-toolbar" hidden>
         <div class="chips" id="filter-chips"></div>
-        <label class="tagging-pick" title="Navidrome-friendly tagging for Qobuz album/track downloads">
+        <label class="tagging-pick" title="Navidrome-friendly tagging for Qobuz and Tidal album/track downloads">
           Tagging
           <select id="tagging-override" class="select select-small">
             <option value="">Default</option>
@@ -113,10 +113,11 @@
             <label class="switch"><input type="checkbox" id="tagging-enabled"><span class="slider"></span></label>
           </div>
           <p class="panel-note">
-            Qobuz album/track downloads get re-tagged after download with proper
-            multi-artist, role, and compilation tags instead of streamrip's own
-            joined-string defaults. See <code>docs/navidrome-tagging.md</code> for the
-            full mapping. Only Qobuz downloads are re-tagged for now.
+            Qobuz and Tidal album/track downloads get re-tagged after download with proper
+            multi-artist and compilation tags instead of streamrip's own joined-string
+            defaults. Qobuz also gets role credits, label and genre; Tidal's API doesn't
+            provide those. See <code>docs/navidrome-tagging.md</code> for the full mapping.
+            Only FLAC files are re-tagged.
           </p>
           <div class="field-grid">
             <label>Navidrome version<span class="hint">Controls which tags are safe to write. Match it to your server</span>
@@ -207,7 +208,7 @@
               <option value="0">0: 256kbps AAC</option>
               <option value="1">1: 320kbps AAC</option>
               <option value="2">2: 16-bit/44.1kHz FLAC</option>
-              <option value="3" selected>3: 24-bit/44.1kHz MQA</option>
+              <option value="3" selected>3: hi-res FLAC (up to 24-bit, falls back to 16-bit)</option>
             </select></label>
           </div>
         </div>
