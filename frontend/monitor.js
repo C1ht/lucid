@@ -71,7 +71,7 @@
     })
       .then((m) => {
         render(m);
-        showToast(box.checked ? "Only catalogue-listed releases will be monitored" : "Monitoring all Qobuz releases", "ok");
+        showToast(box.checked ? "Only catalogue-listed releases will be monitored" : "Monitoring all releases the source lists", "ok");
       })
       .catch((err) => showToast(err.message, "bad"));
   });

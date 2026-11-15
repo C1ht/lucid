@@ -147,6 +147,19 @@
         </div>
 
         <div class="panel">
+          <div class="panel-header"><h2>Download source</h2></div>
+          <p class="panel-note">Where releases you pick from the catalogue are downloaded from. If it doesn't have a release, Lucid tries the other one (when it's set up), then YouTube. Log in to each below.</p>
+          <div class="field-grid">
+            <label>Download from<select class="select" id="source-primary">
+              <option value="qobuz">Qobuz</option>
+              <option value="tidal">Tidal</option>
+            </select></label>
+            <label class="checkbox-row"><input type="checkbox" id="source-fallback"> Fall back to the other one when it doesn't have a release</label>
+          </div>
+          <p class="panel-note" id="source-status"></p>
+        </div>
+
+        <div class="panel">
           <div class="panel-header">
             <h2>Qobuz</h2>
             <label class="switch"><input type="checkbox" id="qobuz-enabled"><span class="slider"></span></label>
@@ -184,7 +197,11 @@
             <h2>Tidal</h2>
             <label class="switch"><input type="checkbox" id="tidal-enabled"><span class="slider"></span></label>
           </div>
-          <p class="panel-note">Tidal login requires a one-time interactive step. Run <code>podman exec -it lucid rip config --tidal</code> after starting the container, then refresh this page.</p>
+          <p class="panel-note">Log in with your Tidal account (a HiFi plan for lossless). Lucid gives you a link, you approve it in your own browser, and the login is stored here. It's the same as running <code>rip config --tidal</code>.</p>
+          <div class="panel-actions">
+            <button type="button" class="btn btn-outline" id="tidal-login">Log in to Tidal</button>
+            <span id="tidal-status" class="test-result"></span>
+          </div>
           <div class="field-grid">
             <label>Quality<select class="select" id="tidal-quality">
               <option value="0">0: 256kbps AAC</option>
@@ -238,7 +255,7 @@
             <h2>Catalogue</h2>
             <label class="switch"><input type="checkbox" id="catalog-enabled"><span class="slider"></span></label>
           </div>
-          <p class="panel-note">Qobuz's own artist and album listings contain wrong-artist uploads and AI filler. With this on, search and artist/album pages show a curated catalogue instead, and Qobuz (or YouTube) is only used to find the files when you download. Nothing is downloaded from the catalogue itself. MusicBrainz needs no setup; the optional Last.fm key adds artist bios and fills releases MusicBrainz is missing (only ones people actually listen to).</p>
+          <p class="panel-note">Qobuz's own artist and album listings contain wrong-artist uploads and AI filler. With this on, search and artist/album pages show a curated catalogue instead, and your download source (Qobuz or Tidal, or YouTube) is only used to find the files when you download. Nothing is downloaded from the catalogue itself. MusicBrainz needs no setup; the optional Last.fm key adds artist bios and fills releases MusicBrainz is missing (only ones people actually listen to).</p>
           <div class="field-grid">
             <label>Source<select class="select" id="catalog-provider">
               <option value="auto">Automatic (Spotify if set up, else MusicBrainz)</option>

@@ -119,6 +119,25 @@ def repair_streamrip_config() -> None:
             path.write_text(after, encoding="utf-8")
 
 
+def tidal_ready() -> bool:
+    """Has a Tidal login been stored (by the Settings login button or `rip config --tidal`)?"""
+    try:
+        doc = tomlkit.parse(paths.STREAMRIP_CONFIG_PATH.read_text(encoding="utf-8"))
+        return bool(doc.get("tidal", {}).get("access_token"))
+    except (OSError, tomlkit.exceptions.TOMLKitError):
+        return False
+
+
+def store_tidal_login(info: dict) -> None:
+    """Write a fresh Tidal login (user_id, country_code, access_token, refresh_token, token_expiry)."""
+    ensure_streamrip_config()
+    with _lock:
+        doc = tomlkit.parse(paths.STREAMRIP_CONFIG_PATH.read_text(encoding="utf-8"))
+        for key in ("user_id", "country_code", "access_token", "refresh_token", "token_expiry"):
+            doc["tidal"][key] = info[key]
+        paths.STREAMRIP_CONFIG_PATH.write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+
 def reset_qobuz_app() -> bool:
     """Forget the Qobuz app id and secrets streamrip cached, so its next login fetches fresh ones
     from Qobuz's web player. Returns whether anything was cleared."""

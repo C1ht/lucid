@@ -21,8 +21,8 @@ from typing import Any, Optional
 
 import httpx
 
-from . import config_store, deezer, lastfm, musicbrainz
-from .browse import BrowseError, browser
+from . import config_store, deezer, lastfm, musicbrainz, sources
+from .browse import BrowseError
 from .catalog_base import MATCH_THRESHOLD, CatalogError, norm, sim
 
 API = "https://api.spotify.com/v1"
@@ -270,16 +270,16 @@ client = SpotifyClient()
 _gate = asyncio.Semaphore(6)
 
 
-async def _qobuz(query: str) -> dict:
+async def _search(source: str, query: str) -> dict:
     async with _gate:
         try:
-            return await browser.search(query)
+            return await sources.browser(source).search(query)
         except BrowseError:
             raise
         except Exception as exc:
-            # A timeout or odd reply is not "Qobuz doesn't have it": saying so would cache a miss
+            # A timeout or odd reply is not "it isn't there": saying so would cache a miss
             # and send the download to YouTube. Let the caller say "try again" instead.
-            raise BrowseError(f"Qobuz didn't answer ({type(exc).__name__}). Try again in a moment.", 503) from exc
+            raise BrowseError(f"{sources.label(source)} didn't answer ({type(exc).__name__}). Try again in a moment.", 503) from exc
 
 
 _VARIANT = re.compile(
@@ -308,13 +308,28 @@ def _queries(sp: dict) -> list[str]:
     return [first] + ([sp["title"]] if names and sp["title"] and sp["title"] != first else [])
 
 
-async def _resolve_album(sp: dict) -> Optional[dict]:
+async def _resolve(kind: str, sp: dict) -> Optional[dict]:
+    """The card for this catalogue item on the first download source that has it (the preferred
+    one, then the other when the fallback is on), tagged with that `source`. A source that
+    errored never counts as "doesn't have it": if nothing else matched, the error is raised."""
     names = sp["artists"]
-    for q in _queries(sp):
-        hit = _best_album(sp, names, await _qobuz(q))
-        if hit:
-            return hit
+    pick = _best_album if kind == "album" else _best_track
+    failure: Optional[BrowseError] = None
+    for src in sources.order():
+        try:
+            for q in _queries(sp):
+                hit = pick(sp, names, await _search(src, q))
+                if hit:
+                    return {**hit, "source": src}
+        except BrowseError as exc:
+            failure = failure or exc
+    if failure:
+        raise failure
     return None
+
+
+async def _resolve_album(sp: dict) -> Optional[dict]:
+    return await _resolve("album", sp)
 
 
 def _best_album(sp: dict, names: list[str], resp: dict) -> Optional[dict]:
@@ -330,12 +345,7 @@ def _best_album(sp: dict, names: list[str], resp: dict) -> Optional[dict]:
 
 
 async def _resolve_track(sp: dict) -> Optional[dict]:
-    names = sp["artists"]
-    for q in _queries(sp):
-        hit = _best_track(sp, names, await _qobuz(q))
-        if hit:
-            return hit
-    return None
+    return await _resolve("track", sp)
 
 
 def _best_track(sp: dict, names: list[str], resp: dict) -> Optional[dict]:
@@ -595,6 +605,11 @@ _cards: dict[str, tuple[float, Optional[dict]]] = {}
 _UNSET = object()
 
 
+def reset_caches() -> None:
+    _cards.clear()
+    _resolved.clear()
+
+
 def _card_get(key: str):
     hit = _cards.get(key)
     return hit[1] if hit and time.monotonic() - hit[0] < 1800 else _UNSET
@@ -614,18 +629,30 @@ async def qobuz_card(kind: str, item_id: str) -> Optional[dict]:
     return card
 
 
+def _where() -> str:
+    return " or ".join(sources.label(n) for n in sources.order())
+
+
 async def qobuz_album_id(item_id: str) -> str:
     card = await qobuz_card("album", item_id)
     if not card:
-        raise BrowseError("This release isn't available on Qobuz.", 404)
+        raise BrowseError(f"This release isn't available on {_where()}.", 404)
     return card["id"]
 
 
 async def qobuz_track_id(item_id: str) -> str:
     card = await qobuz_card("track", item_id)
     if not card:
-        raise BrowseError("This song isn't available on Qobuz.", 404)
+        raise BrowseError(f"This song isn't available on {_where()}.", 404)
     return card["id"]
+
+
+async def source_card(kind: str, item_id: str) -> dict:
+    """The download source's card (with `source` and `id`) for a catalogue item, or an error."""
+    card = await qobuz_card(kind, item_id)
+    if not card:
+        raise BrowseError(f"This {'release' if kind == 'album' else 'song'} isn't available on {_where()}.", 404)
+    return card
 
 
 def youtube_fallback() -> bool:
@@ -637,7 +664,7 @@ async def source_for(kind: str, item_id: str) -> dict:
     """Where a download of this item would come from, and at what quality."""
     card = await qobuz_card(kind, item_id)
     if card:
-        return {"source": "qobuz", "id": card["id"], "quality": card.get("quality")}
+        return {"source": card.get("source", "qobuz"), "id": card["id"], "quality": card.get("quality")}
     if youtube_fallback():
         return {"source": "youtube", "quality": "lossy"}
     return {"source": None}
@@ -730,14 +757,16 @@ async def youtube_plan(kind: str, item_id: str) -> dict:
     return {"items": items, "missing": missing, "cover_url": (album or {}).get("cover_large")}
 
 
-async def qobuz_artist_id(item_id: str) -> Optional[str]:
-    """The Qobuz artist whose releases line up with this Spotify artist's, for monitoring."""
+async def source_artist(item_id: str) -> Optional[dict]:
+    """The download source's artist ({"source", "id"}) whose releases line up with this catalogue
+    artist's, for monitoring."""
     if (hit := _recall(item_id)) is not None:
-        return hit
+        src, _, aid = hit.partition("|")
+        return {"source": src, "id": aid}
     sid = raw(item_id)
     name = (await _artist_meta(item_id))["name"]
-    ids: list[str] = []
-    # The catalogue's own list is enough to recognise the Qobuz artist (no cross-checking needed,
+    found: list[tuple[str, str]] = []
+    # The catalogue's own list is enough to recognise the artist (no cross-checking needed,
     # which would take many extra requests); the full cross-checked list is only a fallback.
     for disco in (None, True):
         if disco is None:
@@ -745,10 +774,14 @@ async def qobuz_artist_id(item_id: str) -> Optional[str]:
         else:
             releases = (await full_discography(item_id, 12))[:8]
         hits = [c for c in await asyncio.gather(*[_resolve_album(a) for a in releases], return_exceptions=True) if isinstance(c, dict)]
-        ids = [c["artist_id"] for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
-        if ids:
+        found = [(c["source"], c["artist_id"]) for c in hits if c.get("artist_id") and _artist_ok(c["artist"], [name])]
+        if found:
             break
-    return _remember(item_id, max(set(ids), key=ids.count)) if ids else None
+    if not found:
+        return None
+    best = max(set(found), key=found.count)
+    _remember(item_id, f"{best[0]}|{best[1]}")
+    return {"source": best[0], "id": best[1]}
 
 
 async def resolve_ids(media_type: str, item_id: str) -> str:
@@ -773,7 +806,7 @@ def _dedupe(items: list[dict]) -> list[dict]:
 
 
 async def _artist_card(qobuz_id: str, name: str) -> dict:
-    resp = await _qobuz(name)
+    resp = await _search(sources.primary(), name)
     for c in resp["artists"]:
         if c["id"] == qobuz_id:
             return dict(c)

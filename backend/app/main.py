@@ -9,9 +9,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config_store, libcheck, navidrome, paths, spotify, youtube
+from . import config_store, libcheck, navidrome, paths, sources, spotify, tidal_login, youtube
 from .monitor import monitor
-from .browse import BrowseError, browser
+from .browse import BrowseError
 from .jobs import manager
 from .schemas import (
     DownloadByIdRequest,
@@ -54,6 +54,7 @@ async def put_settings(settings: Settings) -> dict:
         saved = config_store.save_settings(settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    spotify.reset_caches()  # which service a release resolves to may have changed
     return config_store.redact(saved)
 
 
@@ -61,6 +62,28 @@ async def put_settings(settings: Settings) -> dict:
 async def test_navidrome(nav: NavidromeSettings) -> dict:
     ok, message = await navidrome.test_connection(nav)
     return {"ok": ok, "message": message}
+
+
+@app.get("/api/source", dependencies=[Depends(require_auth)])
+async def get_source() -> dict:
+    """Which service downloads come from right now, and which are set up."""
+    order = sources.order()
+    return {
+        "primary": order[0],
+        "label": sources.label(order[0]),
+        "order": order,
+        "ready": {n: sources.ready(n) for n in sources.NAMES},
+    }
+
+
+@app.post("/api/tidal/login", dependencies=[Depends(require_auth)])
+async def tidal_login_start() -> dict:
+    return tidal_login.start()
+
+
+@app.get("/api/tidal/login", dependencies=[Depends(require_auth)])
+async def tidal_login_state() -> dict:
+    return tidal_login.state.public()
 
 
 @app.post("/api/search", dependencies=[Depends(require_auth)])
@@ -86,7 +109,7 @@ def _browse(call):
 async def browse_search(q: str) -> dict:
     if len(q.strip()) < 2:
         raise HTTPException(status_code=400, detail="Type at least 2 characters")
-    return await _browse(browser.search)(q)
+    return await _browse(sources.primary_browser().search)(q)
 
 
 def _require_youtube() -> None:
@@ -130,16 +153,6 @@ async def _spotify_page(build, item_id: str) -> dict:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
-async def _spotify_to_qobuz(media_type: str, item_id: str) -> str:
-    """Qobuz id for a Spotify result, or a clear error when Qobuz doesn't have it."""
-    try:
-        return await spotify.resolve_ids(media_type, item_id)
-    except spotify.SpotifyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except BrowseError as exc:
-        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
-
-
 class AvailabilityRequest(BaseModel):
     albums: list[str] = []
     tracks: list[str] = []
@@ -159,14 +172,14 @@ async def spotify_availability(req: AvailabilityRequest) -> dict:
 async def browse_album(album_id: str) -> dict:
     if spotify.is_sp(album_id):
         return await _spotify_page(spotify.album_page, album_id)
-    return await _browse(browser.album)(album_id)
+    return await _browse(sources.primary_browser().album)(album_id)
 
 
 @app.get("/api/browse/artist/{artist_id}", dependencies=[Depends(require_auth)])
 async def browse_artist(artist_id: str, spotify_id: str = "", spotify_on: bool = False) -> dict:
     if spotify.is_sp(artist_id):
         return await _spotify_page(spotify.artist_page, artist_id)
-    page = await _browse(browser.artist)(artist_id)
+    page = await _browse(sources.primary_browser().artist)(artist_id)
     if (spotify_id or spotify_on) and spotify.available():
         try:
             return await spotify.filter_artist(page, spotify_id or None)
@@ -181,7 +194,7 @@ async def browse_suggest(kind: str, q: str, artist: str = "") -> dict:
         raise HTTPException(status_code=400, detail="kind must be artist or album")
     if len(q.strip()) < 2:
         return {"items": []}
-    return {"items": await _browse(browser.suggest)(kind, q, artist)}
+    return {"items": await _browse(sources.primary_browser().suggest)(kind, q, artist)}
 
 
 COVER_MAX_BYTES = 12 * 1024 * 1024
@@ -227,21 +240,28 @@ async def fetch_cover(req: CoverFetchRequest) -> dict:
 
 @app.get("/api/browse/preview/{track_id}", dependencies=[Depends(require_auth)])
 async def browse_preview(track_id: str) -> dict:
+    br = sources.primary_browser()
     if spotify.is_sp(track_id):
-        track_id = await _spotify_to_qobuz("track", track_id)
-    return await _browse(browser.preview)(track_id)
+        try:
+            card = await spotify.source_card("track", track_id)
+        except spotify.SpotifyError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except BrowseError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        br, track_id = sources.browser(card["source"]), card["id"]
+    return await _browse(br.preview)(track_id)
 
 
 @app.get("/api/browse/track/{track_id}", dependencies=[Depends(require_auth)])
 async def browse_track(track_id: str) -> dict:
     if spotify.is_sp(track_id):
         return await _spotify_page(spotify.track_page, track_id)
-    return await _browse(browser.track)(track_id)
+    return await _browse(sources.primary_browser().track)(track_id)
 
 
 @app.get("/api/browse/playlist/{playlist_id}", dependencies=[Depends(require_auth)])
 async def browse_playlist(playlist_id: str) -> dict:
-    return await _browse(browser.playlist)(playlist_id)
+    return await _browse(sources.primary_browser().playlist)(playlist_id)
 
 
 @app.post("/api/download", dependencies=[Depends(require_auth)])
@@ -265,9 +285,9 @@ async def download_by_id(req: DownloadByIdRequest) -> dict:
         if src["source"] is None:
             raise HTTPException(
                 status_code=404,
-                detail="Not available on Qobuz" + (", and the YouTube fallback is off." if config_store.load_settings().youtube.enabled else "."),
+                detail=f"Not available on {' or '.join(sources.label(n) for n in sources.order())}" + (", and the YouTube fallback is off." if config_store.load_settings().youtube.enabled else "."),
             )
-        req = req.model_copy(update={"id": src["id"], "source": "qobuz"})
+        req = req.model_copy(update={"id": src["id"], "source": src["source"]})
     job = manager.enqueue("id", label, req.model_dump())
     return job.model_dump()
 
@@ -406,17 +426,19 @@ async def put_monitor_schedule(req: MonitorScheduleRequest) -> dict:
 @app.post("/api/monitor/artists", dependencies=[Depends(require_auth)])
 async def add_monitored_artist(req: MonitorArtistRequest) -> dict:
     try:
-        sp_id = None
+        sp_id, source = None, sources.primary()
         if spotify.is_sp(req.id):
-            sp_id, qid = req.id, None
+            sp_id, found = req.id, None
             try:
-                qid = await spotify.qobuz_artist_id(req.id)
+                found = await spotify.source_artist(req.id)
             except spotify.SpotifyError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
-            if not qid:
-                raise HTTPException(status_code=404, detail="Couldn't find this artist on Qobuz, so there's nothing to monitor.")
-            req = req.model_copy(update={"id": qid})
-        return await monitor.add_artist(req.id, req.spotify, sp_id)
+            if not found:
+                names = " or ".join(sources.label(n) for n in sources.order())
+                raise HTTPException(status_code=404, detail=f"Couldn't find this artist on {names}, so there's nothing to monitor.")
+            req = req.model_copy(update={"id": found["id"]})
+            source = found["source"]
+        return await monitor.add_artist(req.id, req.spotify, sp_id, source)
     except BrowseError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 

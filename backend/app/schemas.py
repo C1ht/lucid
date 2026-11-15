@@ -95,6 +95,13 @@ class TaggingSettings(BaseModel):
     navidrome_version_tier: NavidromeVersionTier = "0_55_plus"
 
 
+class SourceSettings(BaseModel):
+    """Where releases are downloaded from when you pick them from the catalogue."""
+
+    primary: Literal["qobuz", "tidal"] = "qobuz"
+    fallback: bool = True  # try the other source (if set up) when the primary lacks a release
+
+
 class NavidromeSettings(BaseModel):
     enabled: bool = False
     url: str = ""
@@ -110,6 +117,7 @@ class Settings(BaseModel):
     youtube: YoutubeSettings = Field(default_factory=YoutubeSettings)
     spotify: SpotifySettings = Field(default_factory=SpotifySettings)
     catalog: CatalogSettings = Field(default_factory=CatalogSettings)
+    source: SourceSettings = Field(default_factory=SourceSettings)
     conversion: ConversionSettings = Field(default_factory=ConversionSettings)
     filepaths: FilepathSettings = Field(default_factory=FilepathSettings)
     downloads: DownloadsSettings = Field(default_factory=DownloadsSettings)

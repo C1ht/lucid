@@ -93,8 +93,9 @@
     menuTargets.set(key, target);
     return `<button type="button" class="${cls}" data-more="${attr(key)}" title="More options" aria-label="More options">${ICON.more}</button>`;
   };
+  const dl = () => window.dlLabel || "Qobuz"; // the service downloads come from (Settings > Download source)
   const qobuzTarget = (t) => ({
-    source: "qobuz",
+    source: window.dlSource || "qobuz",
     id: t.id,
     label: labelTrack(t),
     prefill: {
@@ -139,10 +140,13 @@
   const avail = new Map();
   function srcBadge(src) {
     if (!src) return "";
-    if (src.source === "qobuz") return `<span class="src src-qobuz" title="Downloaded from Qobuz">Qobuz · ${esc(src.quality || "lossless")}</span>`;
+    if (src.source === "qobuz" || src.source === "tidal") {
+      const name = src.source === "tidal" ? "Tidal" : "Qobuz";
+      return `<span class="src src-qobuz" title="Downloaded from ${name}">${name} · ${esc(src.quality || "lossless")}</span>`;
+    }
     if (src.source === "youtube")
-      return `<span class="src src-youtube" title="Not on Qobuz. Downloaded from YouTube track by track (lossy), tagged from the catalogue">YouTube · lossy</span>`;
-    return `<span class="src src-none" title="${src.unknown ? "Couldn't check" : "Not on Qobuz, and the YouTube fallback is off or disabled"}">${src.unknown ? "Unknown" : "Unavailable"}</span>`;
+      return `<span class="src src-youtube" title="Not on ${dl()}. Downloaded from YouTube track by track (lossy), tagged from the catalogue">YouTube · lossy</span>`;
+    return `<span class="src src-none" title="${src.unknown ? "Couldn't check" : `Not on ${dl()}, and the YouTube fallback is off or disabled`}">${src.unknown ? "Unknown" : "Unavailable"}</span>`;
   }
   const srcSlot = (kind, id) =>
     String(id).startsWith("sp:") ? `<div class="src-line" data-src="${kind}:${attr(id)}">${srcBadge(avail.get(kind + ":" + id))}</div>` : "";
@@ -338,18 +342,18 @@
     const sp = r.spotify;
     if (!sp) return "";
     if (sp.source) {
-      return `<p class="spotify-note">Results come from ${esc(providerName(sp))}. Qobuz is only used when you download or preview. <button type="button" class="link-btn" data-act="spotify-off">Search Qobuz instead</button></p>`;
+      return `<p class="spotify-note">Results come from ${esc(providerName(sp))}. ${dl()} is only used when you download or preview. <button type="button" class="link-btn" data-act="spotify-off">Search ${dl()} instead</button></p>`;
     }
     const parts = [];
     if (sp.albums_total) parts.push(`${sp.albums_found} of ${sp.albums_total} releases`);
     if (sp.tracks_total) parts.push(`${sp.tracks_found} of ${sp.tracks_total} songs`);
-    const found = parts.length ? ` Found on Qobuz: ${parts.join(", ")}.` : "";
+    const found = parts.length ? ` Found on ${dl()}: ${parts.join(", ")}.` : "";
     return `<p class="spotify-note">Matched against Spotify, so releases filed under the wrong artist are left out.${found} <button type="button" class="link-btn" data-act="spotify-off">Search without Spotify</button></p>`;
   }
 
   function idleHtml() {
     return `<div class="idle">
-      <p class="idle-title">Search ${spotifyActive() ? "the catalogue (downloads come from Qobuz)" : "Qobuz"}${ytEnabled() ? " and YouTube" : ""}</p>
+      <p class="idle-title">Search ${spotifyActive() ? `the catalogue (downloads come from ${dl()})` : dl()}${ytEnabled() ? " and YouTube" : ""}</p>
       <p>Find artists, albums, songs and playlists, or paste a link to open it directly.</p>
     </div>`;
   }
@@ -426,9 +430,9 @@
   function sourceNote(src, what) {
     if (!src) return "";
     if (src.source === "youtube")
-      return `<p class="spotify-note">Qobuz doesn't have this ${what}. It will be downloaded from YouTube instead, one track at a time, as lossy audio (Opus or AAC) tagged with the catalogue's details. Tracks with no good YouTube match are skipped.</p>`;
+      return `<p class="spotify-note">${dl()} doesn't have this ${what}. It will be downloaded from YouTube instead, one track at a time, as lossy audio (Opus or AAC) tagged with the catalogue's details. Tracks with no good YouTube match are skipped.</p>`;
     if (src.source === null)
-      return `<p class="spotify-note">This ${what} isn't on Qobuz, so it can't be downloaded. Turn on the YouTube fallback in Settings > YouTube to get it from there.</p>`;
+      return `<p class="spotify-note">This ${what} isn't on ${dl()}, so it can't be downloaded. Turn on the YouTube fallback in Settings > YouTube to get it from there.</p>`;
     return "";
   }
 
@@ -542,7 +546,7 @@
         d.spotify
           ? `<p class="spotify-note">${
               d.spotify.source
-                ? `Releases, photo and details come from ${providerName(d.spotify)}. Qobuz is only used for downloading.`
+                ? `Releases, photo and details come from ${providerName(d.spotify)}. ${dl()} is only used for downloading.`
                 : d.spotify.id
                 ? `Showing releases that ${providerName(d.spotify)} lists for this artist.${
                     d.spotify.hidden ? ` ${plural(d.spotify.hidden, "release")} hidden as likely mis-filed.` : ""
@@ -550,7 +554,7 @@
                 : "This artist wasn't found in the catalogue, so nothing is filtered."
             }${d.spotify.source ? "" : ` <button type="button" class="link-btn" data-act="spotify-unfilter">Show everything</button>`}</p>`
           : d.spotify_error
-            ? `<p class="spotify-note">Catalogue: ${esc(d.spotify_error)} Showing unfiltered Qobuz data.</p>`
+            ? `<p class="spotify-note">Catalogue: ${esc(d.spotify_error)} Showing unfiltered ${dl()} data.</p>`
             : ""
       }
       <div class="artist-bar" id="artist-bar"></div>
@@ -754,7 +758,7 @@
       } catch (err) {
         // Spotify trouble shouldn't break search: fall back to plain Qobuz and say so.
         const plain = await api(`/api/browse/search?q=${enc}`);
-        plain.errors = [`Catalogue: ${err.message} Showing unfiltered Qobuz results.`];
+        plain.errors = [`Catalogue: ${err.message} Showing unfiltered ${dl()} results.`];
         return plain;
       }
     };
@@ -880,7 +884,7 @@
     return api("/api/download", {
       method: "POST",
       body: JSON.stringify({
-        source: yt ? "youtube" : "qobuz",
+        source: yt ? "youtube" : window.dlSource || "qobuz",
         media_type: yt ? "track" : kind,
         id,
         desc: label,
@@ -899,7 +903,7 @@
       const res = await queueDownload(kind, id, label);
       if (res && res.via === "youtube") {
         const miss = res.missing && res.missing.length ? `, ${res.missing.length} not found on YouTube` : "";
-        showToast(`Not on Qobuz. Queued ${plural(res.queued, "track")} from YouTube${miss}: ${label}`, "ok");
+        showToast(`Not on ${dl()}. Queued ${plural(res.queued, "track")} from YouTube${miss}: ${label}`, "ok");
       } else showToast(`Queued: ${label}`, "ok");
       const original = btn.innerHTML;
       btn.classList.add("done");

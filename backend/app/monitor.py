@@ -17,8 +17,8 @@ from typing import Any, Optional
 
 from . import paths
 from .library import downloaded_ids
-from . import spotify
-from .browse import BrowseError, browser
+from . import sources, spotify
+from .browse import BrowseError
 from .jobs import INTERRUPTED, manager
 
 TICK_SECONDS = 30
@@ -104,13 +104,16 @@ class Monitor:
         self._save()
         return self.state()
 
-    async def add_artist(self, artist_id: str, use_spotify: Optional[bool] = None, spotify_id: Optional[str] = None) -> dict:
-        artist = await browser.artist(artist_id, fresh=True)
+    async def add_artist(
+        self, artist_id: str, use_spotify: Optional[bool] = None, spotify_id: Optional[str] = None, source: str = "qobuz"
+    ) -> dict:
+        artist = await sources.browser(source).artist(artist_id, fresh=True)
         if use_spotify is None:
             use_spotify = spotify.available()  # on by default whenever the reference catalogue is on
         self.artists[artist_id] = {
             "spotify": use_spotify,
             "spotify_id": spotify_id,
+            "source": source,
             "id": artist_id,
             "name": artist["name"],
             "image": artist.get("image"),
@@ -191,12 +194,38 @@ class Monitor:
                 if album_id in entry["known"]:
                     entry["known"].remove(album_id)
 
+    async def _move_to_usable_source(self, entry: dict) -> None:
+        """An artist added under a service that isn't usable any more (you switched from Qobuz to
+        Tidal) is found again on the one that is. Everything it lists now counts as already seen:
+        you already have those releases (under the old service's ids), so only new ones queue."""
+        if entry.get("source", "qobuz") in sources.order() or not entry.get("spotify_id") or not spotify.available():
+            return
+        sid = entry["spotify_id"] if ":" in entry["spotify_id"] else "sp:" + entry["spotify_id"]
+        try:
+            found = await spotify.source_artist(sid)
+        except spotify.SpotifyError:
+            return
+        if not found:
+            return
+        page = await sources.browser(found["source"]).artist(found["id"], fresh=True)
+        self.artists.pop(entry["id"], None)
+        entry.update(
+            source=found["source"],
+            id=found["id"],
+            known=[a["id"] for a in _releases(page)],
+            jobs={},
+            last_error=None,
+        )
+        self.artists[entry["id"]] = entry
+
     async def _check_artist(self, entry: dict) -> None:
         entry["last_checked"] = _now().isoformat()
         entry.setdefault("jobs", {})
         self._forget_failed(entry)
         try:
-            artist = await browser.artist(entry["id"], fresh=True)
+            await self._move_to_usable_source(entry)
+            br = sources.browser(entry.get("source", "qobuz"))  # entries from before Tidal are Qobuz
+            artist = await br.artist(entry["id"], fresh=True)
         except BrowseError as exc:
             entry["last_error"] = str(exc)
             return
@@ -224,7 +253,7 @@ class Monitor:
             if album["id"] in known or not _is_released(album):
                 continue
             try:
-                detail = await browser.album(album["id"])
+                detail = await br.album(album["id"])
             except BrowseError as exc:
                 entry["last_error"] = str(exc)  # leave it unrecorded; retried next check
                 continue
@@ -236,7 +265,7 @@ class Monitor:
             job = manager.enqueue(
                 "id",
                 f"[Monitor] {label}",
-                {"source": "qobuz", "media_type": "album", "id": album["id"], "desc": label},
+                {"source": entry.get("source", "qobuz"), "media_type": "album", "id": album["id"], "desc": label},
             )
             entry["jobs"][album["id"]] = job.id
             queued.append(album["title"])

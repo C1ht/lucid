@@ -265,6 +265,10 @@ async function loadSettings() {
   qs("qobuz-email").value = s.qobuz.email_or_userid;
   qs("qobuz-quality").value = String(s.qobuz.quality);
 
+  qs("source-primary").value = s.source.primary;
+  qs("source-fallback").checked = s.source.fallback;
+  refreshSource();
+
   qs("tidal-enabled").checked = s.tidal.enabled;
   qs("tidal-quality").value = String(s.tidal.quality);
 
@@ -352,6 +356,7 @@ function collectSettings() {
       fallback: qs("youtube-fallback").checked,
       cookies: qs("youtube-cookies").value,
     },
+    source: { primary: qs("source-primary").value, fallback: qs("source-fallback").checked },
     catalog: {
       enabled: qs("catalog-enabled").checked,
       provider: qs("catalog-provider").value,
@@ -418,7 +423,80 @@ function initDesktopFolderPicker() {
   });
 }
 
+/* Which service downloads come from right now (and what's set up). browse.js reads these. */
+window.dlSource = "qobuz";
+window.dlLabel = "Qobuz";
+async function refreshSource() {
+  try {
+    const src = await api("/api/source");
+    window.dlSource = src.primary;
+    window.dlLabel = src.label;
+    const set = (n) => (src.ready[n] ? "set up" : "not set up");
+    qs("source-status").textContent = `Qobuz: ${set("qobuz")}. Tidal: ${set("tidal")}. Downloading from ${src.order.map((n) => (n === "tidal" ? "Tidal" : "Qobuz")).join(", then ")}.`;
+    const t = qs("tidal-status");
+    if (src.ready.tidal && !t.dataset.busy) {
+      t.textContent = "Logged in";
+      t.className = "test-result ok";
+    }
+    document.dispatchEvent(new Event("source-changed"));
+  } catch (err) {
+    /* the page still works with the defaults */
+  }
+}
+
+function initTidalLogin() {
+  let timer = null;
+  const status = (text, cls = "") => {
+    const el = qs("tidal-status");
+    el.textContent = text;
+    el.className = `test-result ${cls}`;
+  };
+  async function poll() {
+    clearTimeout(timer);
+    try {
+      const s = await api("/api/tidal/login");
+      if (s.status === "waiting") {
+        if (s.url) {
+          const el = qs("tidal-status");
+          el.dataset.busy = "1";
+          el.className = "test-result";
+          el.innerHTML = `Open <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.url)}</a> and approve the login. Waiting…`;
+        }
+        timer = setTimeout(poll, 2000);
+        return;
+      }
+      delete qs("tidal-status").dataset.busy;
+      qs("tidal-login").disabled = false;
+      if (s.status === "done") {
+        status("Logged in to Tidal", "ok");
+        showToast("Logged in to Tidal", "ok");
+        refreshSource();
+      } else if (s.status === "error") {
+        status(s.error, "bad");
+      }
+    } catch (err) {
+      delete qs("tidal-status").dataset.busy;
+      qs("tidal-login").disabled = false;
+      status(err.message, "bad");
+    }
+  }
+  qs("tidal-login").addEventListener("click", async () => {
+    qs("tidal-login").disabled = true;
+    status("Contacting Tidal…");
+    qs("tidal-status").dataset.busy = "1";
+    try {
+      await api("/api/tidal/login", { method: "POST" });
+      poll();
+    } catch (err) {
+      delete qs("tidal-status").dataset.busy;
+      qs("tidal-login").disabled = false;
+      status(err.message, "bad");
+    }
+  });
+}
+
 function initSettings() {
+  initTidalLogin();
   loadSettings()
     .then(applyQobuzTokenMode)
     .catch((err) => showToast(`Failed to load settings: ${err.message}`, "bad"));
@@ -433,6 +511,7 @@ function initSettings() {
     try {
       await api("/api/settings", { method: "PUT", body: JSON.stringify(collectSettings()) });
       window.youtubeEnabled = qs("youtube-enabled").checked;
+      refreshSource();
       qs("youtube-cookies").value = "";
       qs("spotify-client-secret").value = "";
       qs("catalog-lastfm").value = "";

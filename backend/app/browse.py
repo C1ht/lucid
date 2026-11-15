@@ -159,16 +159,20 @@ def _config_mtime() -> float:
         return 0.0
 
 
-def _friendly(exc: Exception) -> BrowseError:
+def _friendly(exc: Exception, label: str = "Qobuz") -> BrowseError:
     name = type(exc).__name__
-    if "MissingCredentials" in name:
-        return BrowseError("Qobuz isn't set up yet. Add your credentials in Settings.", 400)
-    if "Authentication" in name:
-        return BrowseError("Qobuz rejected your credentials. Check them in Settings.", 400)
-    return BrowseError(f"Qobuz request failed: {exc}", 502)
+    text = str(exc)
+    if "MissingCredentials" in name or "Access token not found" in text:
+        return BrowseError(f"{label} isn't set up yet. Add your credentials in Settings.", 400)
+    if "Authentication" in name or "Login failed" in text or "Refresh failed" in text:
+        return BrowseError(f"{label} rejected your login. Check or redo it in Settings.", 400)
+    return BrowseError(f"{label} request failed: {exc}", 502)
 
 
 class QobuzBrowser:
+    label = "Qobuz"
+    client_cls = QobuzClient
+
     def __init__(self) -> None:
         self._client: Optional[QobuzClient] = None
         self._client_mtime = 0.0
@@ -199,15 +203,15 @@ class QobuzBrowser:
                         config_store.repair_streamrip_config()
                         config = Config(str(paths.STREAMRIP_CONFIG_PATH))
                 except Exception as exc:  # noqa: BLE001
-                    raise _friendly(exc) from exc
-                client = QobuzClient(config)
+                    raise _friendly(exc, self.label) from exc
+                client = self.client_cls(config)
                 try:
                     await client.login()
                 except Exception as exc:  # noqa: BLE001
                     session = getattr(client, "session", None)
                     if session is not None:
                         await session.close()
-                    raise _friendly(exc) from exc
+                    raise _friendly(exc, self.label) from exc
                 self._client, self._client_mtime = client, mtime
             return self._client
 
@@ -221,7 +225,7 @@ class QobuzBrowser:
                 raise
             except Exception as exc:  # noqa: BLE001
                 if attempt == 1:
-                    raise _friendly(exc) from exc
+                    raise _friendly(exc, self.label) from exc
                 await self._drop()
 
     async def _cached(self, key: str, factory: Callable[[], Awaitable[Any]]) -> Any:
@@ -241,8 +245,8 @@ class QobuzBrowser:
             try:
                 return await client.get_metadata(item_id, media_type)
             except Exception as exc:  # noqa: BLE001
-                if "Error fetching metadata" in str(exc):
-                    raise BrowseError("That item isn't available on Qobuz.", 404) from exc
+                if "Error fetching metadata" in str(exc) or "not found" in str(exc).lower():
+                    raise BrowseError(f"That item isn't available on {self.label}.", 404) from exc
                 raise
 
         return await self._with_client(call)
