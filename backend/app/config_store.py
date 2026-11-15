@@ -119,6 +119,23 @@ def repair_streamrip_config() -> None:
             path.write_text(after, encoding="utf-8")
 
 
+def reset_qobuz_app() -> bool:
+    """Forget the Qobuz app id and secrets streamrip cached, so its next login fetches fresh ones
+    from Qobuz's web player. Returns whether anything was cleared."""
+    path = paths.STREAMRIP_CONFIG_PATH
+    if not path.exists():
+        return False
+    with _lock:
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+        q = doc.get("qobuz")
+        if q is None or not (q.get("app_id") or q.get("secrets")):
+            return False
+        q["app_id"] = ""
+        q["secrets"] = []
+        path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    return True
+
+
 def resolve_download_folder(settings: Settings) -> Path:
     if settings.downloads.absolute_path:
         folder = Path(settings.downloads.absolute_path)

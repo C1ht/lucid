@@ -331,13 +331,19 @@ class JobManager:
                     }
                 )
 
+            bad_secret = False
+
             async def run_once() -> tuple[int, set[str]]:
+                nonlocal bad_secret
                 skipped: set[str] = set()
 
                 async def watch(line: str) -> None:
+                    nonlocal bad_secret
                     m = _SKIPPED_RE.search(line)
                     if m:
                         skipped.add(m.group(1))
+                    if "InvalidAppSecretError" in line or "when testing secret" in line:
+                        bad_secret = True
                     await on_line(line)
 
                 tracker = progress.ProgressTracker(staging_dir, estimated_total, on_progress)
@@ -355,6 +361,12 @@ class JobManager:
             carried: set[str] = set()  # ids from an earlier pass of this same job
             try:
                 returncode, skipped = await run_once()
+                if returncode != 0 and bad_secret and not yt_url and config_store.reset_qobuz_app():
+                    # streamrip caches Qobuz's app secrets and never refreshes them itself, so stale
+                    # ones fail every login. Clear them and let it fetch new ones once.
+                    await on_line("[qobuz] The cached Qobuz app secrets were rejected. Clearing them and trying once more.")
+                    bad_secret = False
+                    returncode, skipped = await run_once()
                 if returncode == 0 and skipped:
                     # streamrip skips anything its database says it already has. If the
                     # files were deleted outside Lucid (or before Lucid tracked them),
