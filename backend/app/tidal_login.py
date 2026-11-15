@@ -60,7 +60,15 @@ async def _run() -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
-        state.status, state.error = "error", str(exc) or type(exc).__name__
+        text = str(exc) or type(exc).__name__
+        if "403" in text and "mimetype" in text:
+            # Tidal's login server answered with a block page instead of JSON.
+            text = (
+                "Tidal's login server refused the request (403, an HTML block page instead of a login "
+                "response). It happens with streamrip's built-in Tidal app credentials, not because of "
+                "your account or network. Try again later, or use another source for now."
+            )
+        state.status, state.error = "error", text
     finally:
         session = getattr(client, "session", None)
         if session is not None:
