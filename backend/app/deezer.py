@@ -61,6 +61,11 @@ class Deezer:
                 self._cache.pop(k, None)
         return data
 
+    def forget(self, path: str) -> None:
+        """Drop cached answers for a path (a monitor check wants the live list)."""
+        for key in [k for k in self._cache if k.startswith(f"{path}?")]:
+            self._cache.pop(key, None)
+
     async def _paged(self, path: str, limit: int) -> list[dict]:
         out: list[dict] = []
         index = 0

@@ -431,8 +431,9 @@ async function refreshSource() {
     const src = await api("/api/source");
     window.dlSource = src.primary;
     window.dlLabel = src.label;
-    const set = (n) => (src.ready[n] ? "set up" : "not set up");
-    qs("source-status").textContent = `Qobuz: ${set("qobuz")}. Tidal: ${set("tidal")}. Downloading from ${src.order.map((n) => (n === "tidal" ? "Tidal" : "Qobuz")).join(", then ")}.`;
+    const names = { qobuz: "Qobuz", tidal: "Tidal", deezer: "Deezer" };
+    const set = (n) => `${names[n]}: ${src.ready[n] ? "set up" : "not set up"}`;
+    qs("source-status").textContent = `${Object.keys(names).map(set).join(". ")}. Downloading from ${src.order.map((n) => names[n]).join(", then ")}.`;
     const t = qs("tidal-status");
     if (src.ready.tidal && !t.dataset.busy) {
       t.textContent = "Logged in";

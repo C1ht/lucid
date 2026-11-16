@@ -316,6 +316,16 @@ async def _resolve(kind: str, sp: dict) -> Optional[dict]:
     pick = _best_album if kind == "album" else _best_track
     failure: Optional[BrowseError] = None
     for src in sources.order():
+        if src == "deezer" and sp.get("p") == "dz:":
+            # This item came from Deezer's own catalogue: its id is the exact release, no matching.
+            return {
+                "id": str(sp["id"]),
+                "title": sp["title"],
+                "artist": (sp.get("artists") or [""])[0],
+                "artist_id": (sp.get("artist_ids") or [None])[0],
+                "quality": "lossless FLAC",
+                "source": "deezer",
+            }
         try:
             for q in _queries(sp):
                 hit = pick(sp, names, await _search(src, q))

@@ -140,8 +140,8 @@
   const avail = new Map();
   function srcBadge(src) {
     if (!src) return "";
-    if (src.source === "qobuz" || src.source === "tidal") {
-      const name = src.source === "tidal" ? "Tidal" : "Qobuz";
+    if (src.source === "qobuz" || src.source === "tidal" || src.source === "deezer") {
+      const name = { tidal: "Tidal", deezer: "Deezer" }[src.source] || "Qobuz";
       return `<span class="src src-qobuz" title="Downloaded from ${name}">${name} · ${esc(src.quality || "lossless")}</span>`;
     }
     if (src.source === "youtube")

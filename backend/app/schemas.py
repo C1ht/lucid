@@ -98,7 +98,7 @@ class TaggingSettings(BaseModel):
 class SourceSettings(BaseModel):
     """Where releases are downloaded from when you pick them from the catalogue."""
 
-    primary: Literal["qobuz", "tidal"] = "qobuz"
+    primary: Literal["qobuz", "tidal", "deezer"] = "qobuz"
     fallback: bool = True  # try the other source (if set up) when the primary lacks a release
 
 

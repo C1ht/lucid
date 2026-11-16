@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from . import config_store, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve, youtube
+from . import config_store, deezer_browse, library, metadata_fetch, navidrome, paths, progress, streamrip_cli, url_resolve, youtube
 from .schemas import DownloadByIdRequest, DownloadByUrlRequest, JobKind, JobOut, JobStatus
 from .tagging import custom as custom_tags
 from .tagging import retag
@@ -78,6 +78,30 @@ class Job:
             "library_root": self.library_root,
             "track_ids": self.track_ids,
         }
+
+
+def _quality_lines(staging_dir: Path) -> list[str]:
+    """What was actually downloaded, e.g. "3 file(s): FLAC 24-bit/96 kHz". The service's own label
+    says what it offers; this says what arrived."""
+    import mutagen
+
+    counts: dict[str, int] = {}
+    for path in iter_audio_files(staging_dir):
+        try:
+            f = mutagen.File(path)
+            info = getattr(f, "info", None)
+            kind = path.suffix.lstrip(".").upper()
+            if info is None:
+                label = kind
+            elif kind == "FLAC":
+                label = f"FLAC {getattr(info, 'bits_per_sample', '?')}-bit/{getattr(info, 'sample_rate', 0) / 1000:g} kHz"
+            else:
+                rate = getattr(info, "bitrate", 0)
+                label = f"{kind} {rate // 1000} kbps" if rate else kind
+        except Exception:  # noqa: BLE001 - purely informational
+            continue
+        counts[label] = counts.get(label, 0) + 1
+    return [f"{n} file(s): {label}" for label, n in counts.items()]
 
 
 class JobManager:
@@ -304,14 +328,25 @@ class JobManager:
                 tagging_pref = req.navidrome_tagging
 
             tagging_wanted = tagging_pref if tagging_pref is not None else settings.tagging.enabled
-            do_retag = source in ("qobuz", "tidal") and media_type in ("album", "track") and tagging_wanted
+            do_retag = source in ("qobuz", "tidal", "deezer") and media_type in ("album", "track") and tagging_wanted
 
             # Fetch Qobuz metadata once, reused for both the size estimate
             # (progress bar) and retagging -- never fails the job if it errors.
             meta: Optional[dict] = None
             estimated_total: Optional[int] = None
-            album_meta: Optional[dict] = None  # Tidal singles: the album the track is on
-            if source in ("qobuz", "tidal") and media_type and item_id:
+            album_meta: Optional[dict] = None  # Tidal/Deezer singles: the album the track is on
+            if source == "deezer" and media_type in ("album", "track") and item_id:
+                # Deezer's public API has everything the tagger needs, so no login is used for it.
+                try:
+                    if media_type == "album":
+                        meta = await deezer_browse.full_album(item_id)
+                    else:
+                        meta = await deezer_browse._get(f"/track/{item_id}")
+                        if (meta.get("album") or {}).get("id"):
+                            album_meta = await deezer_browse._get(f"/album/{meta['album']['id']}")
+                except Exception:  # noqa: BLE001 - tagging is best-effort
+                    meta = None
+            elif source in ("qobuz", "tidal") and media_type and item_id:
                 try:
                     meta = await metadata_fetch.fetch_metadata(source, item_id, media_type)
                     if source == "qobuz":
@@ -416,7 +451,12 @@ class JobManager:
                 else:
                     try:
                         tier = settings.tagging.navidrome_version_tier
-                        if source == "tidal":
+                        if source == "deezer":
+                            if media_type == "album":
+                                notes = retag.retag_deezer_album(staging_dir, meta, tier)
+                            else:
+                                notes = retag.retag_deezer_track(staging_dir, meta, album_meta, tier)
+                        elif source == "tidal":
                             if media_type == "album":
                                 notes = retag.retag_tidal_album(staging_dir, meta, tier)
                             else:
@@ -440,6 +480,9 @@ class JobManager:
                         await on_line(f"[custom tags] {note}")
                 except Exception as exc:  # noqa: BLE001 - keep the download, say what happened
                     await on_line(f"[custom tags] Couldn't apply custom tags, files kept as downloaded: {exc}")
+
+            for line in _quality_lines(staging_dir):
+                await on_line(f"[quality] {line}")
 
             music_dir = config_store.resolve_download_folder(settings)
             moves = tagging_staging.move_into_library(staging_dir, music_dir, job.id)

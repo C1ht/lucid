@@ -14,7 +14,7 @@ from typing import Optional
 from mutagen.flac import FLAC
 from mutagen.id3 import ID3, ID3NoHeaderError
 
-from . import tidal_mapper
+from . import deezer_mapper, tidal_mapper
 from .qobuz_mapper import TrackTagPlan, build_album_tag_plan, build_track_tag_plan
 from .staging import iter_audio_files
 from .writer import apply_tags
@@ -129,6 +129,22 @@ def retag_tidal_album(staging_dir: Path, album_resp: dict, version_tier: str) ->
 
 def retag_tidal_track(staging_dir: Path, track_resp: dict, album_resp: Optional[dict], version_tier: str) -> list[str]:
     track_plan = tidal_mapper.build_track_tag_plan(track_resp, album_resp, version_tier)
+    track_notes, retagged_count, skipped = _apply_plan_to_staging(staging_dir, [track_plan])
+    notes = list(track_notes)
+    notes.append(_build_summary(track_notes, retagged_count, skipped))
+    return notes
+
+
+def retag_deezer_album(staging_dir: Path, album: dict, version_tier: str) -> list[str]:
+    plan = deezer_mapper.build_album_tag_plan(album, version_tier)
+    track_notes, retagged_count, skipped = _apply_plan_to_staging(staging_dir, plan.tracks)
+    notes = list(plan.notes) + track_notes
+    notes.append(_build_summary(track_notes, retagged_count, skipped))
+    return notes
+
+
+def retag_deezer_track(staging_dir: Path, track: dict, album: Optional[dict], version_tier: str) -> list[str]:
+    track_plan = deezer_mapper.build_track_tag_plan(track, album, version_tier)
     track_notes, retagged_count, skipped = _apply_plan_to_staging(staging_dir, [track_plan])
     notes = list(track_notes)
     notes.append(_build_summary(track_notes, retagged_count, skipped))

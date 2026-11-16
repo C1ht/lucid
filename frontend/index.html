@@ -154,6 +154,7 @@
             <label>Download from<select class="select" id="source-primary">
               <option value="qobuz">Qobuz</option>
               <option value="tidal">Tidal</option>
+              <option value="deezer">Deezer</option>
             </select></label>
             <label class="checkbox-row"><input type="checkbox" id="source-fallback"> Fall back to the other one when it doesn't have a release</label>
           </div>
@@ -223,9 +224,10 @@
             <label>Quality<select class="select" id="deezer-quality">
               <option value="0">0: 128kbps MP3</option>
               <option value="1">1: 320kbps MP3</option>
-              <option value="2" selected>2: FLAC</option>
+              <option value="2" selected>2: FLAC (needs a Premium/HiFi plan)</option>
             </select></label>
           </div>
+          <p class="panel-note">FLAC is the best Deezer will give streamrip. Deezer now advertises up to 24-bit/192 kHz on some tracks; whether downloads arrive at that resolution isn't guaranteed. Each finished download's log shows a <code>[quality]</code> line with what actually arrived.</p>
         </div>
 
         <div class="panel">
