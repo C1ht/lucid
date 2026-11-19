@@ -142,6 +142,12 @@ def _install() -> None:
 
 
 def main() -> None:
+    import logging
+
+    # streamrip's Deezer client fetches every track's details at once through a pool of 10
+    # connections, and urllib3 warns for each extra one it drops. Harmless (it just reconnects)
+    # but it floods the job log, so only real errors from it are shown.
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
     _install()
     from streamrip.rip import rip
 
