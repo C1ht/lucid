@@ -111,4 +111,11 @@ async def download(url: str, staging_dir, on_line: Optional[LineCallback]) -> in
         url,
     ]
 
-    return await run_streaming(args, on_line)
+    async def quiet(line: str) -> None:
+        # yt-dlp tries every thumbnail size YouTube lists (dozens of them) and says so for each one.
+        if "thumbnail" in line.lower() and line.startswith("[info]"):
+            return
+        if on_line:
+            await on_line(line)
+
+    return await run_streaming(args, quiet)

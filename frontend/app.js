@@ -84,8 +84,26 @@ function formatBytes(bytes) {
   return (bytes / 1_000_000).toFixed(1) + " MB";
 }
 
+let renderQueued = false;
 function renderJobs() {
+  // Log lines and progress arrive many times a second; draw at most once per frame.
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    drawJobs();
+  });
+}
+
+function drawJobs() {
   const list = qs("job-list");
+  // The list is rebuilt below, so remember where each log was scrolled to (and whether it was
+  // following the end) and put it back, or a log being read jumps to the top on every update.
+  const scrolls = new Map();
+  for (const el of list.querySelectorAll(".job-row")) {
+    const log = el.querySelector(".job-log");
+    if (log) scrolls.set(el.dataset.job, { top: log.scrollTop, end: log.scrollTop + log.clientHeight >= log.scrollHeight - 4 });
+  }
   qs("job-empty").hidden = jobOrder.length > 0;
   list.innerHTML = "";
   for (const id of jobOrder) {
@@ -93,6 +111,7 @@ function renderJobs() {
     if (!job) continue;
     const row = document.createElement("div");
     row.className = "job-row" + (expanded.has(id) ? " expanded" : "");
+    row.dataset.job = id;
 
     let progressHtml = "";
     if (job.status === "running") {
@@ -129,6 +148,10 @@ function renderJobs() {
     row.querySelector("[data-cancel]")?.addEventListener("click", () => cancelJob(job));
     row.querySelector("[data-again]")?.addEventListener("click", (e) => downloadAgain(job, e.currentTarget));
     list.appendChild(row);
+    const log = row.querySelector(".job-log");
+    const was = scrolls.get(id);
+    if (log && was) log.scrollTop = was.end ? log.scrollHeight : was.top;
+    else if (log) log.scrollTop = log.scrollHeight;
   }
   const active = [...jobs.values()].filter((j) => j.status === "queued" || j.status === "running").length;
   const badge = qs("queue-count");
